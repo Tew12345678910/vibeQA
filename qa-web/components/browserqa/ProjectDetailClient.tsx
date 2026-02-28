@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -20,9 +20,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { DetailLoadingState } from "@/components/browserqa/LoadingStates";
 import {
   getProjectById,
-  type ProjectConfig,
 } from "@/lib/browserqa/project-store";
 import { loadRuns, type RunRecord } from "@/lib/browserqa/run-store";
+import { type RunMetadata } from "@/lib/browserqa/project-analysis";
 
 // ------------------------------------------------------------------
 // Priority helpers
@@ -44,13 +44,11 @@ type Props = { projectId: string };
 
 export function ProjectDetailClient({ projectId }: Props) {
   const router = useRouter();
-  const [project, setProject] = useState<ProjectConfig | null>(null);
+  const project = useMemo(() => getProjectById(projectId), [projectId]);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setProject(getProjectById(projectId));
-
     // Load runs from Supabase; fall back to localStorage
     fetch(`/api/projects/${projectId}/runs`)
       .then(async (res) => {
@@ -63,6 +61,7 @@ export function ProjectDetailClient({ projectId }: Props) {
             count_p1: number;
             count_p2: number;
             count_total: number;
+            meta_json?: Record<string, unknown>;
             created_at: string;
             issues?: Array<{
               issue_id: string;
@@ -85,6 +84,7 @@ export function ProjectDetailClient({ projectId }: Props) {
               p2: r.count_p2,
               total: r.count_total,
             },
+            meta: (r.meta_json as RunMetadata | undefined) ?? undefined,
             issues: (r.issues ?? []).map((i) => ({
               id: i.issue_id,
               source: i.source as "github" | "browser",
@@ -301,6 +301,11 @@ function RunCard({ run }: { run: RunRecord }) {
               <p className="text-xs text-slate-500">
                 {run.counts.total} issue{run.counts.total !== 1 ? "s" : ""}
               </p>
+              {run.meta?.scope === "analysis-only" ? (
+                <p className="text-[11px] text-blue-300">
+                  Analyzed pages only ({run.meta.selectedRoutePaths.length})
+                </p>
+              ) : null}
             </div>
           </div>
           <div className="flex items-center gap-2">

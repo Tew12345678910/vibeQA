@@ -1,7 +1,5 @@
 "use client";
 
-import { usePathname } from "next/navigation";
-
 import { AppSidebar } from "@/components/AppSidebar";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -15,13 +13,6 @@ type AppChromeProps = {
 };
 
 export function AppChrome({ children }: AppChromeProps) {
-  const pathname = usePathname();
-  const isLandingPage = pathname === "/landing";
-
-  if (isLandingPage) {
-    return <main className="min-h-[100dvh]">{children}</main>;
-  }
-
   return (
     <SidebarProvider>
       <AppSidebar />

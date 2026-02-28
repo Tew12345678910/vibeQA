@@ -1,4 +1,8 @@
 import { focusSchema, type Focus } from "@/lib/contracts";
+import {
+  normalizeProjectAnalysis,
+  type ProjectAnalysis,
+} from "@/lib/browserqa/project-analysis";
 
 const STORAGE_KEY = "browserqa_projects_v1";
 const DEFAULT_FOCUS: Focus[] = [
@@ -23,6 +27,7 @@ export type ProjectConfig = {
   maxClicksPerPage: number;
   focus: Focus[];
   detectedFramework?: string;
+  analysis?: ProjectAnalysis;
   createdAt: string;
   updatedAt: string;
 };
@@ -75,10 +80,20 @@ function safeParse(raw: string | null): ProjectConfig[] {
           detectedFramework: entry.detectedFramework
             ? String(entry.detectedFramework)
             : undefined,
+          analysis: normalizeProjectAnalysis(entry.analysis),
           createdAt: String(entry.createdAt ?? new Date().toISOString()),
           updatedAt: String(entry.updatedAt ?? new Date().toISOString()),
         } satisfies ProjectConfig;
       })
+      .map((project) => ({
+        ...project,
+        routes:
+          project.routes.length > 0
+            ? project.routes
+            : project.analysis?.routes.map((route) => route.path) ?? [],
+        detectedFramework:
+          project.detectedFramework ?? project.analysis?.framework ?? undefined,
+      }))
       .filter((suite) => suite.id && suite.name && suite.baseUrl);
   } catch {
     return [];
@@ -110,6 +125,7 @@ export function createProject(input: {
   routes?: string[];
   focus: Focus[];
   detectedFramework?: string;
+  analysis?: ProjectAnalysis;
 }): ProjectConfig {
   const projects = loadProjects();
   const now = new Date().toISOString();
@@ -132,7 +148,8 @@ export function createProject(input: {
     maxPages: 6,
     maxClicksPerPage: 6,
     focus: input.focus,
-    detectedFramework: input.detectedFramework,
+    detectedFramework: input.detectedFramework ?? input.analysis?.framework,
+    analysis: input.analysis,
     createdAt: now,
     updatedAt: now,
   };
@@ -160,7 +177,17 @@ export function updateProjectTimestamp(id: string): void {
 
 export function patchProject(
   id: string,
-  patch: Partial<Pick<ProjectConfig, "githubRepo" | "websiteUrl" | "name">>,
+  patch: Partial<
+    Pick<
+      ProjectConfig,
+      | "githubRepo"
+      | "websiteUrl"
+      | "name"
+      | "detectedFramework"
+      | "routes"
+      | "analysis"
+    >
+  >,
 ): ProjectConfig | null {
   const projects = loadProjects();
   const index = projects.findIndex((p) => p.id === id);

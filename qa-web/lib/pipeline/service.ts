@@ -12,6 +12,7 @@ import {
   type StandardsScorecard,
 } from "@/lib/project-auditor/schemas";
 import { generateBrowserUseTestPlan } from "@/lib/project-auditor/test-plan";
+import { analyzeGithubRoutesAndFramework } from "@/lib/browserqa/github-route-analysis";
 import {
   BINARY_EXTENSIONS,
   MAX_FILE_BYTES,
@@ -21,6 +22,7 @@ import {
   TEXT_EXTENSIONS,
 } from "@/lib/project-auditor/constants";
 import { validateHostedHttpsUrl } from "@/lib/utils/urlSafety";
+import { auditRepoWithRag } from "@/lib/rag/service";
 
 type CardPriority = "P0" | "P1" | "P2";
 type CardSource = "local" | "nextjs-api";
@@ -152,6 +154,9 @@ const githubScanRequestSchema = z.object({
   repoUrl: z.string().url(),
   projectName: z.string().trim().min(1).max(120).optional(),
   githubToken: z.string().trim().min(1).optional(),
+  projectId: z.string().trim().min(1).optional(),
+  runId: z.string().trim().min(1).optional(),
+  analysisOnly: z.boolean().optional(),
 });
 
 const confirmReviewRequestSchema = z.object({
@@ -527,6 +532,7 @@ async function fetchBlobContent(args: {
   return null;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function loadGithubSourceFiles(args: {
   repoUrl: string;
   githubToken?: string;
@@ -733,6 +739,7 @@ function toPublicProjectName(input?: string, fallback = "my-app"): string {
   return value ? value.slice(0, 120) : fallback;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function buildScanState(args: {
   sourceFiles: Array<{ path: string; content: string }>;
   projectName?: string;
@@ -1025,38 +1032,147 @@ async function pollRemoteFindings(runState: RunState, scan: ScanState): Promise<
 
 export async function scanGithubRepo(input: unknown) {
   const parsed = githubScanRequestSchema.parse(input);
-  const sourceFiles = await loadGithubSourceFiles({
-    repoUrl: parsed.repoUrl,
-    githubToken: parsed.githubToken,
-  });
   const guessedName = parseGithubRepoUrl(parsed.repoUrl).repo;
+  const projectId = parsed.projectId?.trim();
+  const runId = parsed.runId?.trim();
 
-  const state = await buildScanState({
-    sourceFiles,
-    projectName: parsed.projectName ?? guessedName,
-  });
-
-  return {
-    scanId: state.scanId,
-    project: {
-      name: state.project.name,
-      framework: state.project.framework,
-      router: state.project.router,
-    },
-    routes: state.routes,
-    endpointCount: state.endpointCount,
-    summary: state.summary,
-    report: {
-      id: state.scanId,
-      project: {
-        name: state.project.name,
-        framework: state.project.framework,
+  const seedRunIfNeeded = async (status: "running" | "failed", errorMessage?: string) => {
+    if (!projectId || !runId) return;
+    const db = getDbClient();
+    const nowIso = new Date().toISOString();
+    const { error } = await db.from("project_runs").upsert(
+      {
+        id: runId,
+        project_id: projectId,
+        count_p0: 0,
+        count_p1: 0,
+        count_p2: 0,
+        count_total: 0,
+        created_at: nowIso,
+        meta_json: {
+          status,
+          scanner: "rag-minimax",
+          repo_url: parsed.repoUrl,
+          error: errorMessage ?? null,
+        },
       },
-      generated_at: state.generatedAt,
-      summary: state.summary,
-    },
-    cards: rankAndRenumber(state.localCards),
+      { onConflict: "id" },
+    );
+    if (error) {
+      throw new Error(`Failed to seed project run: ${error.message}`);
+    }
   };
+
+  if (!parsed.analysisOnly) {
+    await seedRunIfNeeded("running");
+  }
+
+  try {
+    if (parsed.analysisOnly) {
+      const analysis = await analyzeGithubRoutesAndFramework({
+        repoUrl: parsed.repoUrl,
+        projectName: parsed.projectName ?? guessedName,
+        githubToken: parsed.githubToken,
+      });
+
+      return {
+        scanId: analysis.scanId,
+        runId: null,
+        status: "completed",
+        project: {
+          name: analysis.project.name,
+          framework: analysis.project.framework,
+          router: analysis.project.router,
+        },
+        routes: analysis.routes,
+        routeInsights: analysis.routeInsights,
+        endpointCount: analysis.endpointCount,
+        summary: {
+          score: 100,
+          p0: 0,
+          p1: 0,
+          p2: 0,
+        },
+        report: {
+          id: analysis.scanId,
+          project: {
+            name: analysis.project.name,
+            framework: analysis.project.framework,
+          },
+          generated_at: new Date().toISOString(),
+          summary: {
+            score: 100,
+            p0: 0,
+            p1: 0,
+            p2: 0,
+          },
+        },
+        cards: [],
+      };
+    }
+
+    const analysisPromise = analyzeGithubRoutesAndFramework({
+      repoUrl: parsed.repoUrl,
+      projectName: parsed.projectName ?? guessedName,
+      githubToken: parsed.githubToken,
+    }).catch(() => null);
+
+    const rag = await auditRepoWithRag({
+      repoUrl: parsed.repoUrl,
+      projectName: parsed.projectName ?? guessedName,
+      githubToken: parsed.githubToken,
+      projectId,
+      runId,
+    });
+    const analysis = await analysisPromise;
+
+    return {
+      scanId: rag.scanId,
+      runId: runId ?? null,
+      status: runId ? "completed" : "done",
+      project: {
+        name:
+          analysis?.project.name ??
+          toPublicProjectName(parsed.projectName, guessedName),
+        framework: analysis?.project.framework ?? "unknown",
+        router: analysis?.project.router ?? "unknown",
+      },
+      routes: analysis?.routes ?? [],
+      routeInsights: analysis?.routeInsights ?? [],
+      endpointCount: analysis?.endpointCount ?? 0,
+      commitSha: rag.commitSha,
+      summary: {
+        score: Math.max(0, 100 - (rag.counts.p0 * 12 + rag.counts.p1 * 6 + rag.counts.p2 * 3)),
+        p0: rag.counts.p0,
+        p1: rag.counts.p1,
+        p2: rag.counts.p2,
+      },
+      report: {
+        id: runId ?? rag.scanId,
+        project: {
+          name:
+            analysis?.project.name ??
+            toPublicProjectName(parsed.projectName, guessedName),
+          framework: analysis?.project.framework ?? "unknown",
+        },
+        generated_at: new Date().toISOString(),
+        summary: {
+          score: Math.max(0, 100 - (rag.counts.p0 * 12 + rag.counts.p1 * 6 + rag.counts.p2 * 3)),
+          p0: rag.counts.p0,
+          p1: rag.counts.p1,
+          p2: rag.counts.p2,
+        },
+      },
+      cards: rag.cards,
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "GitHub scan failed";
+    if (!parsed.analysisOnly) {
+      await seedRunIfNeeded("failed", message);
+    }
+    throw error;
+  }
 }
 
 export async function confirmProjectReview(input: unknown) {

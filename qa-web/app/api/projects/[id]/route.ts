@@ -11,6 +11,7 @@ export async function PATCH(request: Request, context: Context) {
       githubRepo?: string;
       websiteUrl?: string;
       name?: string;
+      configJson?: Record<string, unknown>;
     };
     await patchProjectRow(id, body);
     return NextResponse.json({ ok: true });

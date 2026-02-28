@@ -10,7 +10,27 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { createProject } from "@/lib/browserqa/project-store";
+import {
+  normalizeRoutePath,
+  resolveRoutePurpose,
+  type ProjectAnalysis,
+} from "@/lib/browserqa/project-analysis";
+import { createProject, patchProject } from "@/lib/browserqa/project-store";
+
+type GithubAnalysisResponse = {
+  scanId: string;
+  endpointCount: number;
+  project?: {
+    framework?: string;
+    router?: "app" | "pages" | "unknown";
+  };
+  routes?: string[];
+  routeInsights?: Array<{
+    path?: string;
+    description?: string;
+    criticality?: "high" | "medium" | "low";
+  }>;
+};
 
 export function NewProjectPipelineClient() {
   const router = useRouter();
@@ -23,6 +43,7 @@ export function NewProjectPipelineClient() {
   const [projectName, setProjectName] = useState("");
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [busy, setBusy] = useState(false);
+  const [busyMessage, setBusyMessage] = useState("Creating...");
   const [error, setError] = useState("");
 
   // Handle return from GitHub OAuth
@@ -55,9 +76,77 @@ export function NewProjectPipelineClient() {
     projectName.trim() !== "" &&
     (!!resolvedGithubRepo || websiteUrl.trim() !== "");
 
-  const handleCreate = () => {
+  async function analyzeGithubProject(args: {
+    repoUrl: string;
+    projectName: string;
+  }): Promise<ProjectAnalysis | undefined> {
+    const githubToken = sessionStorage.getItem("github_provider_token")?.trim();
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+    };
+    if (githubToken) {
+      headers["x-github-token"] = githubToken;
+    }
+
+    const response = await fetch("/api/pipeline/analysis/github", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        repoUrl: args.repoUrl,
+        projectName: args.projectName,
+        githubToken: githubToken || undefined,
+      }),
+    });
+
+    if (!response.ok) return undefined;
+    const payload = (await response.json()) as GithubAnalysisResponse;
+    const framework = payload.project?.framework?.trim();
+    if (!framework || !payload.scanId) return undefined;
+
+    const routeInsightsRaw: Array<{
+      path?: string;
+      description?: string;
+      criticality?: "high" | "medium" | "low";
+    }> =
+      payload.routeInsights && payload.routeInsights.length > 0
+        ? payload.routeInsights
+        : (payload.routes ?? []).map((path) => ({ path }));
+
+    const routes = routeInsightsRaw
+      .map((route) => {
+        const rawPath = String(route.path ?? "").trim();
+        if (!rawPath) return null;
+        const path = normalizeRoutePath(rawPath);
+        const routeAnalysis: {
+          path: string;
+          description: string;
+          criticality?: "high" | "medium" | "low";
+        } = {
+          path,
+          description: resolveRoutePurpose(path, route.description),
+        };
+        if (route.criticality) {
+          routeAnalysis.criticality = route.criticality;
+        }
+        return routeAnalysis;
+      })
+      .filter((route): route is NonNullable<typeof route> => route !== null);
+
+    return {
+      source: "github-scan",
+      scanId: payload.scanId,
+      analyzedAt: new Date().toISOString(),
+      framework,
+      router: payload.project?.router ?? "unknown",
+      endpointCount: payload.endpointCount ?? 0,
+      routes,
+    };
+  }
+
+  const handleCreate = async () => {
     if (!canSubmit) return;
     setBusy(true);
+    setBusyMessage("Creating project...");
     setError("");
 
     try {
@@ -77,25 +166,58 @@ export function NewProjectPipelineClient() {
         ],
       });
 
-      // Persist to Supabase (best-effort — does not block navigation)
-      void fetch("/api/projects", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          id: project.id,
-          name: project.name,
-          sourceType: project.sourceType,
-          githubRepo: project.githubRepo,
-          websiteUrl: project.websiteUrl,
-          baseUrl: project.baseUrl,
-        }),
-      }).catch(() => {
-        // Supabase unavailable; project is still saved locally
-      });
+      let finalProject = project;
 
-      router.push(`/projects/${project.id}/run`);
+      if (project.githubRepo) {
+        try {
+          setBusyMessage("Analyzing repository...");
+          const analysis = await analyzeGithubProject({
+            repoUrl: project.githubRepo,
+            projectName: project.name,
+          });
+
+          if (analysis) {
+            finalProject =
+              patchProject(project.id, {
+                analysis,
+                detectedFramework: analysis.framework,
+                routes: analysis.routes.map((route) => route.path),
+              }) ?? finalProject;
+          }
+        } catch {
+          // Analysis is best-effort; creation still succeeds.
+        }
+      }
+
+      setBusyMessage("Finalizing...");
+      // Persist to Supabase — awaited so the row exists before the scan starts.
+      // Non-fatal: if this fails the project is still in localStorage and will be
+      // upserted server-side on the first scan run.
+      try {
+        await fetch("/api/projects", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            id: finalProject.id,
+            name: finalProject.name,
+            sourceType: finalProject.sourceType,
+            githubRepo: finalProject.githubRepo,
+            websiteUrl: finalProject.websiteUrl,
+            baseUrl: finalProject.baseUrl,
+            configJson: finalProject.analysis
+              ? { analysis: finalProject.analysis }
+              : {},
+          }),
+        });
+      } catch {
+        // Supabase unavailable — project is saved locally and will sync on first scan.
+      }
+
+      router.push(`/projects/${finalProject.id}/run`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create project");
+      setBusyMessage("Creating...");
+    } finally {
       setBusy(false);
     }
   };
@@ -220,7 +342,7 @@ export function NewProjectPipelineClient() {
             disabled={busy || !canSubmit}
             className="bg-emerald-500 text-slate-950 hover:bg-emerald-400 disabled:opacity-50"
           >
-            {busy ? "Creating..." : "Create Project"}
+            {busy ? busyMessage : "Create Project"}
           </Button>
         </CardContent>
       </Card>

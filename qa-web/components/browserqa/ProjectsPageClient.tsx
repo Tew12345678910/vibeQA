@@ -3,28 +3,41 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   Clock,
   ExternalLink,
   FolderKanban,
   Play,
   Plus,
   Search,
-  Trash2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { fetchAudits } from "@/lib/browserqa/api";
 import { formatDate } from "@/lib/browserqa/format";
-import { buildProjectsFromAudits } from "@/lib/browserqa/project-utils";
-import { deleteProject } from "@/lib/browserqa/project-store";
-import { StatusBadge } from "@/components/browserqa/StatusBadge";
 import { CardsLoadingState } from "@/components/browserqa/LoadingStates";
-import type { AuditListItem } from "@/lib/contracts";
+
+// Shape of /api/projects response items (mirrors ProjectWithStats from the DB layer)
+type ProjectSummary = {
+  id: string;
+  name: string;
+  github_repo: string | null;
+  website_url: string | null;
+  base_url: string;
+  created_at: string;
+  updated_at: string;
+  run_count: number;
+  latest_run_id: string | null;
+  latest_run_at: string | null;
+  latest_count_p0: number;
+  latest_count_p1: number;
+  latest_count_p2: number;
+  latest_count_total: number;
+};
 
 export function ProjectsPageClient() {
-  const [audits, setAudits] = useState<AuditListItem[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -32,8 +45,10 @@ export function ProjectsPageClient() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetchAudits({ limit: 50 });
-      setAudits(response.items);
+      const res = await fetch("/api/projects", { cache: "no-store" });
+      if (!res.ok) throw new Error("Failed to load projects");
+      const body = (await res.json()) as { projects: ProjectSummary[] };
+      setProjects(body.projects);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load projects");
@@ -46,29 +61,17 @@ export function ProjectsPageClient() {
     void load();
   }, [load]);
 
-  const projects = useMemo(() => buildProjectsFromAudits(audits), [audits]);
-
   const filtered = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     if (!keyword) return projects;
     return projects.filter(
-      (project) =>
-        project.name.toLowerCase().includes(keyword) ||
-        project.baseUrl.toLowerCase().includes(keyword),
+      (p) =>
+        p.name.toLowerCase().includes(keyword) ||
+        (p.github_repo ?? "").toLowerCase().includes(keyword) ||
+        (p.website_url ?? "").toLowerCase().includes(keyword) ||
+        p.base_url.toLowerCase().includes(keyword),
     );
   }, [search, projects]);
-
-  const onDelete = (projectId: string) => {
-    if (
-      !window.confirm(
-        "Delete this local project config? Existing audit runs will remain.",
-      )
-    ) {
-      return;
-    }
-    deleteProject(projectId);
-    void load();
-  };
 
   if (loading) {
     return <CardsLoadingState titleWidth="w-44" />;
@@ -137,63 +140,79 @@ export function ProjectsPageClient() {
             <Card key={project.id} className="border-slate-800 bg-slate-900/70">
               <CardContent className="space-y-4 p-5">
                 <div className="flex items-start justify-between gap-3">
-                  <div>
+                  <div className="min-w-0">
                     <h3 className="text-lg font-semibold text-slate-100">
                       {project.name}
                     </h3>
-                    {project.detectedFramework ? (
-                      <p className="mt-0.5 text-xs font-medium text-blue-400">
-                        {project.detectedFramework}
+                    {project.github_repo ? (
+                      <p className="mt-0.5 text-xs font-medium text-blue-400 truncate">
+                        {project.github_repo.replace("https://github.com/", "")}
                       </p>
                     ) : null}
                     <p className="mt-1 flex items-center gap-1 text-sm text-slate-500">
-                      <ExternalLink className="h-3.5 w-3.5" />
-                      <span className="truncate">{project.baseUrl}</span>
+                      <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">
+                        {project.website_url ?? project.base_url}
+                      </span>
                     </p>
                   </div>
-                  {project.lastRunStatus ? (
-                    <StatusBadge status={project.lastRunStatus} size="sm" />
+                  {project.latest_count_p0 > 0 ? (
+                    <span className="shrink-0 rounded-full border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-xs font-semibold text-red-300">
+                      {project.latest_count_p0} P0
+                    </span>
+                  ) : project.run_count > 0 ? (
+                    <span className="shrink-0 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-300">
+                      No P0s
+                    </span>
                   ) : null}
                 </div>
 
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <div className="rounded-lg border border-slate-800 bg-slate-800/30 p-2">
                     <p className="text-xl font-bold text-slate-100">
-                      {project.testCaseCount}
+                      {project.run_count}
                     </p>
-                    <p className="text-xs text-slate-500">Tests</p>
+                    <p className="text-xs text-slate-500">Scans</p>
                   </div>
                   <div className="rounded-lg border border-slate-800 bg-slate-800/30 p-2">
                     <p className="text-xl font-bold text-slate-100">
-                      {project.runCount}
+                      {project.run_count > 0 ? project.latest_count_total : "—"}
                     </p>
-                    <p className="text-xs text-slate-500">Runs</p>
+                    <p className="text-xs text-slate-500">Issues</p>
                   </div>
                   <div className="rounded-lg border border-slate-800 bg-slate-800/30 p-2">
                     <p
                       className={`text-xl font-bold ${
-                        project.passRate >= 80
-                          ? "text-emerald-300"
-                          : project.passRate >= 50
-                            ? "text-amber-300"
+                        project.run_count === 0
+                          ? "text-slate-500"
+                          : project.latest_count_p0 === 0
+                            ? "text-emerald-300"
                             : "text-red-300"
                       }`}
                     >
-                      {project.passRate}%
+                      {project.run_count > 0
+                        ? `${project.latest_count_p0}/${project.latest_count_p1}`
+                        : "—"}
                     </p>
-                    <p className="text-xs text-slate-500">Pass</p>
+                    <p className="text-xs text-slate-500">P0/P1</p>
                   </div>
                 </div>
 
                 <div className="flex items-center justify-between border-t border-slate-800 pt-3 text-xs text-slate-500">
                   <span className="inline-flex items-center gap-1">
                     <Clock className="h-3 w-3" />
-                    {formatDate(project.updatedAt)}
+                    {project.latest_run_at
+                      ? `Last scan ${formatDate(project.latest_run_at)}`
+                      : `Created ${formatDate(project.created_at)}`}
                   </span>
-                  {project.fromLocal ? (
-                    <span>Local config</span>
+                  {project.run_count === 0 ? (
+                    <span className="text-slate-600">No scans yet</span>
                   ) : (
-                    <span>Derived from runs</span>
+                    <span className="inline-flex items-center gap-1 text-amber-400/80">
+                      <AlertTriangle className="h-3 w-3" />
+                      {project.latest_count_total} finding
+                      {project.latest_count_total !== 1 ? "s" : ""}
+                    </span>
                   )}
                 </div>
 
@@ -209,19 +228,10 @@ export function ProjectsPageClient() {
                     asChild
                     className="bg-emerald-500 text-slate-950 hover:bg-emerald-400"
                   >
-                    <Link href={`/projects/${project.id}`}>
+                    <Link href={`/projects/${project.id}/run`}>
                       <Play className="h-4 w-4" />
                     </Link>
                   </Button>
-                  {project.fromLocal ? (
-                    <Button
-                      variant="outline"
-                      onClick={() => onDelete(project.id)}
-                      className="border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-red-300"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  ) : null}
                 </div>
               </CardContent>
             </Card>

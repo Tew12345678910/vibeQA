@@ -32,6 +32,8 @@ type CodeChunkRow = {
   chunk_text: string;
 };
 
+type ScoredCodeChunkRow = CodeChunkRow & { score: number };
+
 type RouteInsight = {
   path: string;
   description: string;
@@ -76,12 +78,18 @@ type RagIssueCard = {
     summary: string;
     implementation_steps: string[];
     acceptance_criteria: string[];
-    estimated_effort: "S" | "M" | "L";
+    estimated_effort: "XS" | "S" | "M" | "L";
     confidence: "high" | "medium" | "low";
   };
   education: {
     why_it_matters: string;
     rule_of_thumb: string;
+  };
+  telemetry: {
+    retrieval: {
+      rule_hits: Array<{ control_id: string; score: number }>;
+      code_hits: Array<{ path: string; line_start: number; line_end: number; score: number }>;
+    };
   };
   status: {
     state: "open";
@@ -177,39 +185,57 @@ const CODE_CHUNK_SIZE = 200;
 const CODE_CHUNK_OVERLAP = 30;
 
 const ISSUE_CARD_SCHEMA_PROMPT = `
-Return ONLY valid JSON object or null.
+You are a senior security engineer and engineering educator writing issue cards that teach developers
+not just how to fix this specific bug, but how to reason about this entire class of problem forever.
+
+Return ONLY valid JSON object or null. Do not wrap in markdown.
 
 JSON schema:
 {
-  "id": "<control_id from RETRIEVED_RULES>",
+  "id": "<control_id from RETRIEVED_RULES — must match exactly>",
   "source": "nextjs-api",
-  "title": "string",
+  "title": "Action-imperative title: what must be done and where. E.g. 'Enforce max limit on GET /api/items to prevent unbounded payloads'",
   "priority": "P0|P1|P2",
   "category": "string",
-  "standard_refs": [{"name": "string", "type": "internal|standard", "url": "optional"}],
-  "impact": {"user": "string", "business": "string", "risk": "string"},
+  "standard_refs": [{"name": "string", "type": "internal|standard", "url": "optional string"}],
+  "impact": {
+    "user": "Concrete user-observable failure mode. E.g. 'Users see 30s+ timeouts or out-of-memory crashes when paginating large datasets without a server-side cap.'",
+    "business": "Downstream engineering or business risk. E.g. 'Uncontrolled scans spike DB load and cloud egress costs; a single adversarial request can starve other tenants.'",
+    "risk": "Security or reliability exploit vector. E.g. 'Any authenticated caller can trigger a full-table scan via ?limit=999999, enabling data exfiltration and DoS.'"
+  },
   "scope": {
-    "surfaces": [{"kind": "endpoint|route", "path": "string", "method": "optional"}],
+    "surfaces": [{"kind": "endpoint|route", "path": "string", "method": "optional string"}],
     "files": [{"path": "string", "line_start": 1, "line_end": 1}]
   },
   "problem": {
-    "summary": "string",
+    "summary": "Precise diagnosis citing the exact code pattern that violates the rule, why it is wrong, and what invariant it breaks.",
     "evidence": [{
       "type": "code",
-      "path": "string",
+      "path": "string — must come from RETRIEVED_CODE_CHUNKS",
       "line_start": 1,
       "line_end": 1,
-      "snippet": "string"
+      "snippet": "verbatim, minimal code extracted from the provided chunk that demonstrates the violation"
     }]
   },
   "recommendation": {
-    "summary": "string",
-    "implementation_steps": ["string"],
-    "acceptance_criteria": ["string"],
-    "estimated_effort": "S|M|L",
+    "summary": "One-sentence concrete fix describing the precise change required.",
+    "implementation_steps": [
+      "Step 1 — Be precise and copy-paste-ready. Include inline code examples where useful. E.g. 'Add const MAX_LIMIT = 100; at the top of the handler, then validate: const limit = Math.min(Number(searchParams.get(\'limit\') ?? 20), MAX_LIMIT);'",
+      "Step 2 — Address the validation layer, middleware, or shared helper that should enforce this rule consistently.",
+      "Step 3 — Add a regression test: describe what the test must assert, e.g. 'Write a test that sends limit=99999 and asserts the response contains at most MAX_LIMIT items.'",
+      "Step 4 — (if applicable) Document the limit in the OpenAPI spec or route handler JSDoc so consumers know the cap exists."
+    ],
+    "acceptance_criteria": [
+      "Verifiable criterion 1 — e.g. 'GET /api/items?limit=99999 returns at most 100 items and a 200 status code.'",
+      "Verifiable criterion 2 — e.g. 'A unit test that mocks the DB and passes limit=0 asserts it is clamped to the default page size.'"
+    ],
+    "estimated_effort": "XS|S|M|L  (XS=under 30 min, S=under 2 h, M=under 1 day, L=over 1 day)",
     "confidence": "high|medium|low"
   },
-  "education": {"why_it_matters": "string", "rule_of_thumb": "string"},
+  "education": {
+    "why_it_matters": "2–4 sentences explaining the security and reliability principle behind this rule, why it exists in standards, and what class of incident it prevents. Write for a mid-level engineer who knows the language but may not know the threat model. For example: 'Unbounded list endpoints are one of the most common sources of accidental DoS and data-exfiltration vectors in REST APIs. Without a server-enforced cap, a single misconfigured client or malicious caller can consume unbounded memory, lock rows, and exhaust connection pools. The fix is always the same: cap inputs at the server, not the client — because clients cannot be trusted.'",
+    "rule_of_thumb": "A memorable, transferable heuristic the developer can apply to every future endpoint they write — not just this one. E.g. 'Every list endpoint must declare its maximum page size as a named constant at the top of the handler, before any DB call. If you cannot name the cap, you do not have one.'"
+  },
   "status": {
     "state": "open",
     "owner": "backend|fullstack",
@@ -218,10 +244,15 @@ JSON schema:
   }
 }
 
-Rules:
-- Evidence MUST reference provided code chunks only.
-- If no concrete static evidence with file + line + snippet exists, return null.
-- id MUST be one of retrieved control_id values.
+Hard rules:
+- Evidence MUST reference file paths and line ranges from the provided RETRIEVED_CODE_CHUNKS only.
+- If no concrete static evidence with file + line + verbatim snippet exists, return null.
+- id MUST exactly match one of the control_id values from RETRIEVED_RULES.
+- impact, problem.summary, implementation_steps, and education fields MUST be substantive and specific — never use placeholder text like "string" or "fix the issue".
+- education.why_it_matters MUST explain the threat model and the class of incident prevented, not merely restate the fix.
+- education.rule_of_thumb MUST be a general principle applicable beyond this specific file.
+- implementation_steps MUST include at least 3 concrete, code-level steps.
+- acceptance_criteria MUST include at least 2 verifiable, automated-test-friendly assertions.
 - Do not output markdown.
 `;
 
@@ -1096,7 +1127,11 @@ function extractJson(raw: string): string | null {
   return null;
 }
 
-function parseIssueCard(rawText: string): RagIssueCard | null {
+function parseIssueCard(
+  rawText: string,
+  ruleHits: RuleMatchRow[],
+  codeHits: ScoredCodeChunkRow[],
+): RagIssueCard | null {
   const candidate = extractJson(rawText);
   if (!candidate || candidate === "null") return null;
 
@@ -1255,11 +1290,11 @@ function parseIssueCard(rawText: string): RagIssueCard | null {
             .filter(Boolean)
             .slice(0, 8)
         : ["Automated checks pass and issue no longer reproduces."],
-      estimated_effort:
-        card.recommendation?.estimated_effort === "L" ||
-        card.recommendation?.estimated_effort === "M"
-          ? card.recommendation.estimated_effort
-          : "S",
+      estimated_effort: (["XS", "S", "M", "L"] as const).includes(
+        card.recommendation?.estimated_effort as "XS" | "S" | "M" | "L",
+      )
+        ? (card.recommendation!.estimated_effort as "XS" | "S" | "M" | "L")
+        : "S",
       confidence:
         card.recommendation?.confidence === "high" ||
         card.recommendation?.confidence === "low"
@@ -1275,6 +1310,20 @@ function parseIssueCard(rawText: string): RagIssueCard | null {
         card.education?.rule_of_thumb ??
           "Validate inputs and enforce least privilege by default.",
       ),
+    },
+    telemetry: {
+      retrieval: {
+        rule_hits: ruleHits.map((h) => ({
+          control_id: h.control_id,
+          score: h.score,
+        })),
+        code_hits: codeHits.map((h) => ({
+          path: h.path,
+          line_start: h.line_start,
+          line_end: h.line_end,
+          score: h.score,
+        })),
+      },
     },
     status: {
       state: "open",
@@ -1516,7 +1565,8 @@ export async function auditRepoWithRag(
           line_start: Number(value.line_start ?? 1),
           line_end: Number(value.line_end ?? 1),
           chunk_text: String(value.chunk_text ?? ""),
-        } satisfies CodeChunkRow;
+          score: Number(value.score ?? 0),
+        } satisfies ScoredCodeChunkRow;
       });
 
       if (ruleHits.length === 0 || codeHits.length === 0) {
@@ -1556,7 +1606,7 @@ export async function auditRepoWithRag(
       ].join("\n");
 
       const modelRaw = await generateIssueCard(prompt);
-      const card = parseIssueCard(modelRaw);
+      const card = parseIssueCard(modelRaw, ruleHits, codeHits);
       if (!card) {
         if (input.projectId && input.runId) {
           await upsertRun({

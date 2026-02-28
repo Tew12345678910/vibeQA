@@ -65,12 +65,18 @@ type ImproveCard = {
     summary: string;
     implementation_steps: string[];
     acceptance_criteria: string[];
-    estimated_effort: "S" | "M" | "L";
+    estimated_effort: "XS" | "S" | "M" | "L";
     confidence: "high" | "medium" | "low";
   };
   education: {
     why_it_matters: string;
     rule_of_thumb: string;
+  };
+  telemetry?: {
+    retrieval?: {
+      rule_hits: Array<{ control_id: string; score: number }>;
+      code_hits: Array<{ path: string; line_start: number; line_end: number; score: number }>;
+    };
   };
   status: {
     state: "open";

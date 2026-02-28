@@ -56,6 +56,65 @@ export async function listProjects(): Promise<ProjectRow[]> {
   return (data ?? []) as ProjectRow[];
 }
 
+export type ProjectWithStats = ProjectRow & {
+  run_count: number;
+  latest_run_id: string | null;
+  latest_run_at: string | null;
+  latest_count_p0: number;
+  latest_count_p1: number;
+  latest_count_p2: number;
+  latest_count_total: number;
+};
+
+export async function listProjectsWithStats(): Promise<ProjectWithStats[]> {
+  const db = getDbClient();
+
+  const [{ data: projects, error: projectsError }, { data: runs, error: runsError }] =
+    await Promise.all([
+      db.from("projects").select("*").order("created_at", { ascending: false }),
+      db
+        .from("project_runs")
+        .select("id, project_id, count_p0, count_p1, count_p2, count_total, created_at")
+        .order("created_at", { ascending: false }),
+    ]);
+
+  if (projectsError) throwDbError(projectsError);
+  if (runsError) throwDbError(runsError);
+
+  // Build per-project run stats: count all runs, pick latest
+  type RunSummary = {
+    id: string;
+    project_id: string;
+    count_p0: number;
+    count_p1: number;
+    count_p2: number;
+    count_total: number;
+    created_at: string;
+  };
+
+  const runsByProject = new Map<string, RunSummary[]>();
+  for (const run of (runs ?? []) as RunSummary[]) {
+    const list = runsByProject.get(run.project_id) ?? [];
+    list.push(run);
+    runsByProject.set(run.project_id, list);
+  }
+
+  return (projects ?? []).map((project) => {
+    const projectRuns = runsByProject.get((project as ProjectRow).id) ?? [];
+    const latest = projectRuns[0] ?? null; // already sorted desc
+    return {
+      ...(project as ProjectRow),
+      run_count: projectRuns.length,
+      latest_run_id: latest?.id ?? null,
+      latest_run_at: latest?.created_at ?? null,
+      latest_count_p0: latest?.count_p0 ?? 0,
+      latest_count_p1: latest?.count_p1 ?? 0,
+      latest_count_p2: latest?.count_p2 ?? 0,
+      latest_count_total: latest?.count_total ?? 0,
+    };
+  });
+}
+
 export async function getProjectRow(id: string): Promise<ProjectRow | null> {
   const db = getDbClient();
   const { data, error } = await db

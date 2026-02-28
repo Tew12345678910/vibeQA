@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { upsertProject, listProjects } from "@/lib/db/repository";
+import { upsertProject, listProjectsWithStats } from "@/lib/db/repository";
 
 export async function GET() {
   try {
-    const projects = await listProjects();
+    const projects = await listProjectsWithStats();
     return NextResponse.json({ projects });
   } catch (error) {
     return NextResponse.json(

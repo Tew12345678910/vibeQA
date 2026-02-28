@@ -10,9 +10,46 @@ Instead of just listing bugs, it explains **why each issue matters** and gives *
 
 ## What This Repo Contains
 
-- `qa-web/` — main Next.js app (landing page, product UI, API routes)
-- `api/` — Python service modules used for browser/review workflows and supporting logic
-- `aws/` — cloud/browser-related helpers
+- **`qa-web/`** — main Next.js app (landing page, product UI, API routes)
+- **`api/`** — Python Cloud Browser API: UI/UX audits via AWS Bedrock AgentCore + browser-use (one agent run per route; returns `routes` with `good_points` and `problems` per route)
+
+## Cloud Browser API (`api/`)
+
+The Python service runs a headless browser against your site and returns UI/UX findings per route.
+
+### Run the API
+
+```bash
+# From repo root; use a venv and install deps first
+pip install -r requirements.txt
+python -m uvicorn api.cloud_api:app --reload --host 0.0.0.0 --port 8001
+```
+
+Docs: `http://localhost:8001/docs`
+
+### Environment (project root `.env`)
+
+Required for the browser agent:
+
+```env
+AGENTCORE_BROWSER_REGION=us-west-2   # or BEDROCK_REGION
+# AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY (or default credential chain)
+```
+
+```env
+BEDROCK_MODEL_ID=us.amazon.nova-pro-v1:0
+AGENTCORE_BROWSER_ID=your-browser-tool-id
+```
+
+### Audit endpoints
+
+| Method | Path                      | Description                                                                                                                    |
+| ------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `POST` | `/audits`                 | Start audit. Body: `{ "baseUrl": "https://example.com", "routes": ["/", "/about"] }`. Returns `{ "externalRunId", "status" }`. |
+| `GET`  | `/audits/{run_id}`        | Get result: `{ "status", "runMode", "routes": [{ "route", "good_points", "problems" }] }`.                                     |
+| `POST` | `/audits/{run_id}/cancel` | Cancel (no-op for current sync implementation).                                                                                |
+
+The agent runs **once per route**; send all paths you want in `routes`. Each item in `routes` is a `RouteAuditResult`: `route` (path), `good_points` (list of strings), `problems` (list of strings), UI/UX only.
 
 ## Product Flow (Matches Landing Page)
 
@@ -30,10 +67,8 @@ Instead of just listing bugs, it explains **why each issue matters** and gives *
 
 ## Requirements
 
-- Node.js 20+
-- pnpm 10+
-- Supabase project (URL + keys)
-- OpenAI-compatible API key for AI analysis
+- **qa-web:** Node.js 20+, pnpm 10+, Supabase project (URL + keys), OpenAI-compatible API key for AI analysis
+- **api/ (Cloud Browser API):** Python 3.10+, AWS credentials, Bedrock AgentCore Browser access; see `requirements.txt`
 
 ## Local Development
 
@@ -71,7 +106,7 @@ CLOUD_BROWSER_API_BASE_URL=
 CLOUD_BROWSER_API_KEY=
 ```
 
-## Main API Routes
+## Main API Routes (qa-web)
 
 - `POST /api/pipeline/analysis/github`
 - `POST /api/pipeline/scans/github`

@@ -1,5 +1,5 @@
 import { DashboardClient } from "@/components/browserqa/DashboardClient";
 
-export default function HomePage() {
+export default function DashboardPage() {
   return <DashboardClient />;
 }

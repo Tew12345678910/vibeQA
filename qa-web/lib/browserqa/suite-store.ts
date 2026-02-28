@@ -1,6 +1,13 @@
 import { focusSchema, type Focus } from "@/lib/contracts";
 
 const STORAGE_KEY = "browserqa_suites_v1";
+const DEFAULT_FOCUS: Focus[] = [
+  "usability",
+  "accessibility",
+  "security",
+  "content",
+  "functional",
+];
 
 export type SuiteConfig = {
   id: string;
@@ -47,7 +54,7 @@ function safeParse(raw: string | null): SuiteConfig[] {
             : [],
           maxPages: Number(entry.maxPages ?? 6),
           maxClicksPerPage: Number(entry.maxClicksPerPage ?? 6),
-          focus: focusValues.length ? focusValues : ["usability", "accessibility", "security", "content", "functional"],
+          focus: focusValues.length ? focusValues : DEFAULT_FOCUS,
           createdAt: String(entry.createdAt ?? new Date().toISOString()),
           updatedAt: String(entry.updatedAt ?? new Date().toISOString()),
         };

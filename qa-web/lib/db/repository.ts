@@ -160,7 +160,7 @@ export async function createAuditRun(
 
   await sql`
     INSERT INTO audit_runs (id, base_url, input_json, status, created_at, updated_at, started_at)
-    VALUES (${auditId}, ${input.baseUrl}, ${sql.json(input)}, ${"queued"}, ${ts}, ${ts}, ${ts})
+    VALUES (${auditId}, ${input.baseUrl}, ${JSON.stringify(input)}, ${"queued"}, ${ts}, ${ts}, ${ts})
   `;
 
   return { auditId, status: "queued" };
@@ -225,13 +225,13 @@ export async function getRunRow(auditId: string): Promise<AuditRunRow | null> {
   await ensureSchema();
   const sql = getSql();
 
-  const rows = await sql<AuditRunRow[]>`
+  const rows = (await sql`
     SELECT id, base_url, input_json, status, external_run_id, summary_json,
            progress_json, error, created_at, updated_at, started_at, finished_at, last_synced_at
     FROM audit_runs
     WHERE id = ${requireUuid(auditId)}
     LIMIT 1
-  `;
+  `) as AuditRunRow[];
 
   return rows[0] ?? null;
 }
@@ -256,8 +256,8 @@ export async function updateRunWithCloudSnapshot(args: {
   await sql`
     UPDATE audit_runs
     SET status = ${args.status},
-        summary_json = ${sql.json(args.summary)},
-        progress_json = ${sql.json(args.progress)},
+        summary_json = ${JSON.stringify(args.summary)},
+        progress_json = ${JSON.stringify(args.progress)},
         error = ${args.error ?? null},
         updated_at = ${ts},
         last_synced_at = ${ts},
@@ -272,21 +272,21 @@ export async function updateRunWithCloudSnapshot(args: {
   for (const item of args.pageResults) {
     await sql`
       INSERT INTO audit_page_results (audit_id, route, viewport_key, status, result_json, created_at, updated_at)
-      VALUES (${args.auditId}, ${item.route}, ${item.viewportKey}, ${item.status}, ${sql.json(item)}, ${ts}, ${ts})
+      VALUES (${args.auditId}, ${item.route}, ${item.viewportKey}, ${item.status}, ${JSON.stringify(item)}, ${ts}, ${ts})
     `;
   }
 
   for (const item of args.issues) {
     await sql`
       INSERT INTO audit_issues (audit_id, severity, category, title, issue_json, created_at)
-      VALUES (${args.auditId}, ${item.severity}, ${item.category}, ${item.title}, ${sql.json(item)}, ${ts})
+      VALUES (${args.auditId}, ${item.severity}, ${item.category}, ${item.title}, ${JSON.stringify(item)}, ${ts})
     `;
   }
 
   for (const item of args.artifacts) {
     await sql`
       INSERT INTO audit_artifacts (audit_id, kind, url, meta_json, created_at)
-      VALUES (${args.auditId}, ${item.kind}, ${item.url}, ${sql.json(item.meta)}, ${ts})
+      VALUES (${args.auditId}, ${item.kind}, ${item.url}, ${JSON.stringify(item.meta)}, ${ts})
     `;
   }
 }
@@ -307,18 +307,18 @@ export async function getAuditStatusResponse(
   const row = await getRunRow(auditId);
   if (!row) return null;
 
-  const [pages, issues, artifacts] = await Promise.all([
-    sql<AuditPageRow[]>`
+  const [pages, issues, artifacts] = (await Promise.all([
+    sql`
       SELECT route, viewport_key, status, result_json FROM audit_page_results
       WHERE audit_id = ${auditId} ORDER BY route ASC, viewport_key ASC
     `,
-    sql<AuditIssueRow[]>`
+    sql`
       SELECT issue_json FROM audit_issues WHERE audit_id = ${auditId} ORDER BY id ASC
     `,
-    sql<AuditArtifactRow[]>`
+    sql`
       SELECT kind, url, meta_json FROM audit_artifacts WHERE audit_id = ${auditId} ORDER BY id ASC
     `,
-  ]);
+  ])) as [AuditPageRow[], AuditIssueRow[], AuditArtifactRow[]];
 
   const summary = row.summary_json ?? emptyAuditSummary(row.base_url);
   const progress: AuditProgress = row.progress_json ?? {
@@ -394,7 +394,7 @@ export async function listAuditStatusResponses(args: {
   const whereClause = conditions.length
     ? `WHERE ${conditions.join(" AND ")}`
     : "";
-  const rows = await sql.unsafe<AuditRunRow[]>(
+  const rows = (await sql.query(
     `
     SELECT id, base_url, input_json, status, external_run_id, summary_json,
            progress_json, error, created_at, updated_at, started_at, finished_at, last_synced_at
@@ -404,7 +404,7 @@ export async function listAuditStatusResponses(args: {
     LIMIT $${params.length}
     `,
     params,
-  );
+  )) as AuditRunRow[];
 
   const hasNext = rows.length > args.limit;
   const slice = hasNext ? rows.slice(0, args.limit) : rows;

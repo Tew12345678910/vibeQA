@@ -42,7 +42,27 @@ DATABASE_URL=postgres://...
 CLOUD_BROWSER_API_BASE_URL=https://your-cloud-browser-api.example.com
 CLOUD_BROWSER_API_KEY=...
 APP_BASE_URL=http://localhost:3000
+# Optional RAG embedder (Python sentence-transformers service)
+RAG_EMBEDDER_URL=http://127.0.0.1:8001/embeddings/embed
+RAG_EMBEDDING_DIMENSIONS=384
 ```
+
+## Python Embedding Service (Sentence-Transformers)
+
+RAG embeddings can run locally without OpenAI by using the Python service in `api/`.
+
+```bash
+cd api
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn cloud_api:app --reload --host 0.0.0.0 --port 8001
+```
+
+Available endpoints:
+
+- `GET /embeddings/health`
+- `POST /embeddings/embed` with body `{ "text": "..." }`
 
 ## Local Development
 

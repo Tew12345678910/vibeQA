@@ -427,7 +427,7 @@ export function LandingPage() {
       </nav>
 
       {/* ── Hero ── */}
-      <section className="relative flex min-h-screen flex-col items-center justify-center px-6 pt-14 pb-24 lg:pb-44">
+      <section className="relative flex min-h-screen flex-col items-center justify-center px-6 pt-14 pb-24">
         <BackgroundOrbs />
         <div
           ref={heroReveal.ref}
@@ -478,11 +478,8 @@ export function LandingPage() {
               </Button>
             </a>
           </div>
-        </div>
 
-        {/* Stats — kept outside the animated container so they don't shift with the typewriter */}
-        <div className="relative mt-10 flex justify-center px-6 lg:absolute lg:bottom-10 lg:left-0 lg:right-0 lg:mt-0">
-          <div className="grid grid-cols-3 gap-8 border-t border-slate-800/60 pt-8 w-full max-w-2xl">
+          <div className="mt-12 grid grid-cols-3 gap-8 border-t border-slate-800/60 pt-8 w-full max-w-2xl mx-auto">
             <div className="flex flex-col items-center gap-1">
               <span className="text-3xl font-bold text-white">2</span>
               <span className="text-sm text-slate-400">

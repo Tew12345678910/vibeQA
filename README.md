@@ -53,7 +53,7 @@ Each card is meant to teach a repeatable engineering pattern:
 
 This "issue -> explanation -> fix -> principle" loop is the core learning model of the product.
 
-## Common Issue Patterns (From Landing Page)
+## Common Issue Patterns
 
 - `P0 Security/Auth`: login endpoints without rate limiting.
 - `P0 Security/CSRF`: state-changing routes that accept untrusted origins.
@@ -61,6 +61,7 @@ This "issue -> explanation -> fix -> principle" loop is the core learning model 
 - `P1 Observability`: no request ID for traceability.
 - `P1 Accessibility`: missing `alt` text and weak interaction semantics.
 - `P2 API Design`: unbounded list endpoints without pagination limits.
+and more than 100+ Patterns in the vector database.
 
 These are high-frequency patterns in AI-generated projects and can usually be fixed quickly once surfaced clearly.
 

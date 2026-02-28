@@ -1,51 +1,160 @@
 # VibeQA
 
-The QA education layer for AI-assisted development.
+VibeQA is a learning-first QA platform for AI-assisted coding.
 
-VibeQA runs two agents on every scan:
-- a **code analysis agent** for repository-level checks
-- a **browser agent** for runtime behavior on the live site
+The idea is simple: AI can already do most implementation work, so the human leverage shifts from "writing all code" to "directing, validating, and correcting AI output." This project helps developers learn that skill by doing real scans on real repos, then turning findings into fix-ready, educational issue cards.
 
-Instead of just listing bugs, it explains **why each issue matters** and gives **concrete fix steps**.
+For this README, we describe the intended integrated flow as working end-to-end: the web app sends route-aware browser tasks to an AWS Bedrock Agent + Browser Use API, receives runtime findings, and merges them with code/RAG findings into one ranked report.
 
-## What This Repo Contains
+## Product Vision
 
-- `qa-web/` — main Next.js app (landing page, product UI, API routes)
-- `api/` — Python service modules used for browser/review workflows and supporting logic
-- `aws/` — cloud/browser-related helpers
+- Replace passive lint-style output with practical, teachable feedback.
+- Teach developers how to control AI systems, not just consume their output.
+- Convert each issue into reusable learning material so the same mistake is less likely to happen again.
 
-## Product Flow (Matches Landing Page)
+## End-to-End Flow
 
-1. Drop your GitHub repo (or URL + website URL).
-2. VibeQA runs code + browser analysis in parallel.
-3. You get prioritized P0/P1/P2 findings with evidence, impact, and fix guidance.
+1. User logs in with GitHub.
+2. User selects a repository the app can access.
+3. Web pipeline scans the repo to infer framework/router/routes.
+4. RAG pipeline evaluates code against rule sets (limitations, security, reliability, quality).
+5. Findings are ranked (`P0`, `P1`, `P2`) and enriched with educational guidance.
+6. Route + context payload is sent to the Bedrock browser agent API.
+7. Browser Use explores pages in multiple orientations/screen sizes and returns runtime findings.
+8. Web app maps all findings into a unified card format with evidence, impact, remediation, and learning notes.
 
-## Core Features
+## The Blind Spot This Project Solves
 
-- GitHub repo intake (picker + URL)
-- Project/run pipeline (`/projects/new` -> `/projects/:id/run`)
-- Framework + route analysis for repo context
-- Unified issue report with educational guidance
-- Supabase-backed persistence for projects, runs, and issues
+AI coding tools are good at producing code that compiles and appears functional.  
+They are not consistently good at enforcing production-grade quality defaults.
 
-## Requirements
+VibeQA focuses on two common blind spots:
+
+1. Static quality and security gaps in generated code.
+Examples: missing validation, missing rate limits, weak authz checks, inconsistent error contracts, missing idempotency, poor observability.
+
+2. Runtime UX and behavior gaps only visible in a browser.
+Examples: inaccessible elements, broken mobile layouts, forms without feedback, redirect loops, unresolved loading states.
+
+The platform combines both perspectives so teams do not ship "works on my machine" code that fails in production conditions.
+
+## How Findings Become Learning Material
+
+VibeQA is designed to produce more than a bug list.
+
+Each card is meant to teach a repeatable engineering pattern:
+
+- what failed (`P0`, `P1`, `P2`, category, scope)
+- why it matters (user impact + risk model)
+- grounded evidence (file/line or browser observation)
+- concrete implementation steps
+- acceptance criteria for verification
+- a "rule of thumb" to prevent repeating the class of issue
+
+This "issue -> explanation -> fix -> principle" loop is the core learning model of the product.
+
+## Common Issue Patterns (From Landing Page)
+
+- `P0 Security/Auth`: login endpoints without rate limiting.
+- `P0 Security/CSRF`: state-changing routes that accept untrusted origins.
+- `P1 Validation`: request bodies/params used without schema parsing.
+- `P1 Observability`: no request ID for traceability.
+- `P1 Accessibility`: missing `alt` text and weak interaction semantics.
+- `P2 API Design`: unbounded list endpoints without pagination limits.
+
+These are high-frequency patterns in AI-generated projects and can usually be fixed quickly once surfaced clearly.
+
+## Product Philosophy
+
+The goal is not to push developers away from AI coding.  
+The goal is to help developers become high-signal operators of AI systems:
+
+- direct AI with better constraints
+- verify outputs with stronger standards
+- fix with clear reasoning instead of cargo-cult patches
+- build intuition that transfers to the next project
+
+In short: connect a repo, run a scan, and get a practical curriculum for improving both the codebase and the developer.
+
+## Repository Layout
+
+- `qa-web/`: Next.js (App Router) product UI and server routes.
+- `api/`: FastAPI service for Bedrock + Browser Use route audits.
+- `aws/`: helper example for Bedrock browser-agent wiring.
+- `qa-web/supabase/migrations/`: schema for projects/runs/issues/rules/vector chunks.
+
+## Core Capabilities
+
+- GitHub OAuth + repository picker.
+- Repo framework/route analysis (`/api/pipeline/analysis/github`).
+- Rule-based RAG audit with vector retrieval and AI-generated issue cards.
+- Browser review orchestration and run polling.
+- Unified issue report with educational sections:
+  - why it matters
+  - rule of thumb
+  - concrete implementation steps
+  - acceptance criteria
+- Supabase persistence for projects, runs, issues, rules, and vector chunks.
+
+## Current/Target Integration Notes
+
+- The architecture is designed for web -> browser-agent API integration.
+- The Python API in `api/` exposes `/audits` endpoints and runs Bedrock + Browser Use.
+- The web pipeline expects a browser review service and merges returned findings into the same issue card model.
+- There is still a local mock browser route in `qa-web/app/api/pipeline/browser-scan/route.ts`; this README documents the intended integrated operating mode.
+
+## Web API Surface (`qa-web`)
+
+- `POST /api/pipeline/analysis/github`
+- `POST /api/pipeline/scans/github`
+- `GET /api/pipeline/scans/:scanId`
+- `POST /api/pipeline/reviews`
+- `GET /api/pipeline/issues/:runId`
+- `GET /api/issues?runId=<RUN_ID>`
+- `GET|POST /api/projects`
+- `PATCH|DELETE /api/projects/:id`
+- `GET|POST /api/projects/:id/runs`
+- `GET /api/projects/:id/runs/:runId`
+- `GET /api/github/repos`
+
+## Browser Agent API Surface (`api`)
+
+- `POST /audits`
+- `GET /audits/{run_id}`
+- `POST /audits/{run_id}/cancel`
+
+The API builds a route test plan and runs Browser Use with AWS Bedrock-backed LLM orchestration, returning route-level UI/UX findings (`good_points`, `problems`).
+
+## Data Model (Supabase)
+
+Key tables:
+
+- `projects`
+- `project_runs`
+- `run_issues`
+- `rules`
+- `control_chunks` (rule embeddings)
+- `code_chunks` (repo chunk embeddings)
+
+This enables:
+
+- per-user project history
+- ranked run snapshots
+- rule retrieval + code retrieval for RAG grounding
+- durable issue cards with evidence metadata
+
+## Prerequisites
 
 - Node.js 20+
 - pnpm 10+
-- Supabase project (URL + keys)
-- OpenAI-compatible API key for AI analysis
+- Python 3.11+
+- Supabase project
+- AI provider key (`AI_API_KEY`) for embeddings + issue generation
+- AWS credentials + Bedrock access for browser agent execution
 
-## Local Development
+## Environment
 
-```bash
-cd qa-web
-pnpm install
-pnpm dev
-```
-
-Open `http://localhost:3000`.
-
-## Environment (`qa-web/.env.local`)
+### `qa-web/.env.local`
 
 Required:
 
@@ -56,33 +165,69 @@ SUPABASE_SECRET_KEY= # or SUPABASE_SERVICE_ROLE_KEY
 AI_API_KEY=
 ```
 
-Also supported:
+Optional/advanced:
 
 ```env
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
-AI_BASE_URL=
-AI_CHAT_MODEL=
-AI_EMBEDDING_MODEL=
 SUPABASE_STORAGE_BUCKET=qa-project-artifacts
+AI_BASE_URL=https://api.openai.com/v1
+AI_CHAT_MODEL=gpt-4o-mini
+AI_EMBEDDING_MODEL=text-embedding-3-small
 BROWSER_USE_SERVER_BASE_URL=
 BROWSER_USE_SERVER_API_KEY=
 CLOUD_BROWSER_API_BASE_URL=
 CLOUD_BROWSER_API_KEY=
 ```
 
-## Main API Routes
+### Root/API env (for `api/`)
 
-- `POST /api/pipeline/analysis/github`
-- `POST /api/pipeline/scans/github`
-- `POST /api/pipeline/reviews`
-- `GET /api/pipeline/issues/:runId`
-- `GET /api/issues?runId=<RUN_ID>`
-- `GET|POST /api/projects`
-- `PATCH|DELETE /api/projects/:id`
-- `GET|POST /api/projects/:id/runs`
+```env
+AGENTCORE_BROWSER_REGION=us-west-2 # or BEDROCK_REGION
+BEDROCK_MODEL_ID=us.amazon.nova-pro-v1:0
+AGENTCORE_BROWSER_ID=               # optional
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_SESSION_TOKEN=                  # if using temporary credentials
+```
 
-## Notes
+## Local Development
 
-- The current app shell and landing branding are **VibeQA**.
-- If you deploy to Vercel, set the project root to `qa-web/`.
+### 1) Web app
+
+```bash
+cd qa-web
+pnpm install
+pnpm dev
+```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+### 2) Python browser-agent API
+
+From repo root:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m uvicorn api.cloud_api:app --reload --host 0.0.0.0 --port 8001
+```
+
+### 3) Rules and vector indexing (recommended for RAG quality)
+
+```bash
+cd qa-web
+pnpm rules:upsert:all
+pnpm rules:index
+```
+
+## Why This Project Matters
+
+VibeQA is not just a scanner. It is a training system for AI-era developers:
+
+- learn to review AI output with standards-based reasoning
+- learn to fix root causes, not only symptoms
+- learn repeatable patterns for safer and more reliable AI-assisted shipping
+
+If you can direct the agent, validate the output, and close the loop with evidence-backed fixes, you can ship faster without losing engineering quality.

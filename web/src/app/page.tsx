@@ -1,76 +1,54 @@
-import Link from "next/link";
+import { AuditForm } from "../components/AuditForm";
+import { educationLevelSchema, focusSchema, type EducationLevel, type Focus } from "../lib/contracts";
 
-import { getDashboardStats } from "../lib/db/queries";
+type Props = {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
 
-export const dynamic = "force-dynamic";
-
-function formatDate(ts: number | null) {
-  if (!ts) {
-    return "-";
-  }
-  return new Date(ts).toLocaleString();
+function asString(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? value[0] ?? "" : (value ?? "");
 }
 
-export default function DashboardPage() {
-  const stats = getDashboardStats();
+function asInt(value: string | string[] | undefined, fallback: number): number {
+  const parsed = Number(asString(value));
+  return Number.isInteger(parsed) ? parsed : fallback;
+}
+
+function parseFocus(value: string): Focus[] {
+  const parts = value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const allowed = new Set(focusSchema.options);
+  const normalized = parts.filter((entry): entry is Focus => allowed.has(entry as Focus));
+  return normalized.length ? normalized : [...focusSchema.options];
+}
+
+function parseEducation(value: string): EducationLevel {
+  const parsed = educationLevelSchema.safeParse(value);
+  return parsed.success ? parsed.data : "intermediate";
+}
+
+export default async function HomePage({ searchParams }: Props) {
+  const params = await searchParams;
 
   return (
     <div className="grid" style={{ gap: "1rem" }}>
-      <h1>Dashboard</h1>
-
-      <section className="grid cols-3">
-        <div className="card">
-          <div className="muted">Suites</div>
-          <strong>{stats.suites}</strong>
-        </div>
-        <div className="card">
-          <div className="muted">Runs</div>
-          <strong>{stats.runs}</strong>
-        </div>
-        <div className="card">
-          <div className="muted">Recent Failed Runs</div>
-          <strong>{stats.failedRuns}</strong>
-        </div>
-      </section>
-
       <section className="card">
-        <h3>Latest Runs</h3>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Run</th>
-              <th>Status</th>
-              <th>Started</th>
-              <th>Suite</th>
-            </tr>
-          </thead>
-          <tbody>
-            {stats.recentRuns.length ? (
-              stats.recentRuns.map((row) => (
-                <tr key={row.id}>
-                  <td>
-                    <Link href={`/runs/${row.id}`}>#{row.id}</Link>
-                  </td>
-                  <td>{row.status}</td>
-                  <td>{formatDate(row.startedAt)}</td>
-                  <td>
-                    <Link href={`/suites/${row.suiteId}`}>Suite #{row.suiteId}</Link>
-                  </td>
-                </tr>
-              ))
-            ) : (
-              <tr>
-                <td colSpan={4} className="muted">
-                  No runs yet
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </section>
-
-      <section>
-        <Link href="/suites">Go to Suites</Link>
+        <h1>Run New Audit</h1>
+        <p className="muted">
+          Enter a hosted HTTPS URL, optional routes, and scan settings. This audit runs in desktop and mobile viewports.
+        </p>
+        <AuditForm
+          initial={{
+            baseUrl: asString(params.baseUrl) || "https://example.com",
+            routesText: asString(params.routes).replace(/,/g, "\n"),
+            maxPages: Math.min(10, Math.max(1, asInt(params.maxPages, 6))),
+            maxClicksPerPage: Math.min(10, Math.max(1, asInt(params.maxClicksPerPage, 6))),
+            educationLevel: parseEducation(asString(params.educationLevel)),
+            focus: parseFocus(asString(params.focus)),
+          }}
+        />
       </section>
     </div>
   );

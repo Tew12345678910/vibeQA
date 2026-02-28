@@ -1,19 +1,12 @@
 # macOS
 .DS_Store
 
-# Python
-__pycache__/
-*.pyc
-.venv/
-
 # Node / Next.js
 web/node_modules/
 web/.next/
 
-# Local runtime state
+# Environment
 web/.env.local
-data/
 
-# Generated QA run exports (keep scaffold dir)
-output/runs/*
-!output/runs/.gitkeep
+# Local scratch data
+data/

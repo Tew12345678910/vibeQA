@@ -1,109 +1,87 @@
-# Agentic UI QA Team Scaffold (Browser-Use Style)
+# EduQA Web Auditor (Vercel Next.js)
 
-This project scaffolds an AI-friendly UI QA pipeline that can:
+Run-centric web auditor for hosted HTTPS apps. The app starts audits on a cloud browser service, tracks status, and renders educational results for desktop and mobile.
 
-1. Read your project code from a target folder.
-2. Infer routes and UI expectations from code.
-3. Generate test cases automatically.
-4. Merge optional human QA guidelines.
-5. Execute browser checks.
-6. Generate fix-oriented reports for coding agents.
+## What This Repo Contains
 
-## What it creates
+- `web/`: Next.js App Router frontend + API routes
+- `data/`: local scratch folder (not used in production)
 
-- `qa_agentic_team/` - CLI pipeline modules.
-- `configs/sample_run.json` - sample run config.
-- `guides/human_guideline.txt` - optional human rule file.
-- `sample_project/` - demo code + static UI for validation.
-- `output/` - generated reports and screenshots.
+## Product Scope
 
-## Install
+- Hosted URL input only (`https://`)
+- Viewports: desktop `1440x900` and mobile `390x844`
+- Async audit lifecycle: `queued`, `running`, `completed`, `failed`, `canceled`
+- Results: page x viewport matrix, issue cards, evidence links, JSON/Markdown export
+- Persistence: Neon Postgres (`DATABASE_URL`)
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m playwright install chromium
-```
+## Removed Legacy Stack
 
-## Run with human guideline
+Python agent scripts, suite/testcase manifest generation, local worker orchestration, and SQLite report exports were removed.
 
-```bash
-python -m qa_agentic_team.cli \
-  --config configs/sample_run.json \
-  --guideline guides/human_guideline.txt \
-  --output output
-```
+## Requirements
 
-## Run without human guideline
+- Node.js 20+
+- npm 10+
+- Neon Postgres database
+- Cloud browser API endpoint + API key
+
+## Environment
+
+Create `web/.env.local` from `web/.env.example`:
 
 ```bash
-python -m qa_agentic_team.cli \
-  --config configs/sample_run.json \
-  --output output_no_guideline
+cd web
+cp .env.example .env.local
 ```
 
-## Guideline format
+Required variables:
 
-`guides/human_guideline.txt` supports lines:
-
-- `MUST_SEE /path :: text`
-- `MUST_NOT_SEE /path :: text`
-- `TITLE /path :: title fragment`
-
-## Output for AI coding agents
-
-- `output/qa_report.md` - readable report.
-- `output/qa_report.json` - full machine-readable details.
-- `output/fix_tasks.json` - focused fix task list with file hints and severity.
-
-## Demo
-
-```bash
-./scripts/demo_run.sh
+```env
+DATABASE_URL=postgres://...
+CLOUD_BROWSER_API_BASE_URL=https://your-cloud-browser-api.example.com
+CLOUD_BROWSER_API_KEY=...
+APP_BASE_URL=http://localhost:3000
 ```
 
-This starts a local static server for `sample_project/ui`, runs the QA pipeline, and writes reports to `output/`.
-
-## Next.js QA Platform (Browser-Use Wrapper)
-
-The repository now includes a Next.js-first QA platform under `web/` that wraps the Python analysis/generation pipeline and executes run-cases via Browser-Use.
-
-### Features in v1
-
-- Single workspace, no auth.
-- Manual/on-demand runs only.
-- Per-suite base URL.
-- Desktop + mobile viewport matrix by default.
-- SQLite persistence (`data/qa.db`) with Drizzle ORM.
-- Report export files in `output/runs/<runId>/`.
-
-### Setup
+## Local Development
 
 ```bash
 cd web
 npm install
-cp .env.example .env.local
-npm run migrate
+npm run db:setup
 npm run dev
 ```
 
 Open `http://localhost:3000`.
 
-### Environment variables
+## API Endpoints
 
-- `BROWSER_USE_BASE_URL`: Browser-Use API endpoint (self-hosted required for localhost/private targets).
-- `BROWSER_USE_API_KEY`: Browser-Use API key.
-- `QA_DB_PATH`: SQLite file path (defaults to `../data/qa.db`).
+- `POST /api/audits` start audit
+- `GET /api/audits` list audits
+- `GET /api/audits/:auditId` get latest audit status/results (includes cloud sync for active runs)
+- `POST /api/audits/:auditId/cancel` cancel run
+- `GET /api/audits/:auditId/export?format=json|md` export report
 
-### Main API routes
+## Deployment (Vercel)
 
-- `POST /api/suites`
-- `GET /api/suites`
-- `GET /api/suites/:suiteId`
-- `POST /api/suites/:suiteId/sync`
-- `POST /api/suites/:suiteId/runs`
-- `GET /api/runs/:runId`
-- `GET /api/runs/:runId/issues`
-- `GET /api/runs/:runId/report`
-- `POST /api/runs/:runId/cancel`
+Set project root to `web/`.
+
+Set environment variables in Vercel:
+
+- `DATABASE_URL`
+- `CLOUD_BROWSER_API_BASE_URL`
+- `CLOUD_BROWSER_API_KEY`
+- `APP_BASE_URL`
+
+Build command:
+
+```bash
+npm run build
+```
+
+Install command:
+
+```bash
+npm install
+```

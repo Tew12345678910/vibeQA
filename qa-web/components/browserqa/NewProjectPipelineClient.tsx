@@ -71,6 +71,22 @@ export function NewProjectPipelineClient() {
         focus: ["usability", "accessibility", "security", "content", "functional"],
       });
 
+      // Persist to Supabase (best-effort — does not block navigation)
+      void fetch("/api/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: project.id,
+          name: project.name,
+          sourceType: project.sourceType,
+          githubRepo: project.githubRepo,
+          websiteUrl: project.websiteUrl,
+          baseUrl: project.baseUrl,
+        }),
+      }).catch(() => {
+        // Supabase unavailable; project is still saved locally
+      });
+
       router.push(`/projects/${project.id}/run`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create project");

@@ -50,8 +50,57 @@ export function ProjectDetailClient({ projectId }: Props) {
 
   useEffect(() => {
     setProject(getProjectById(projectId));
-    setRuns(loadRuns(projectId));
-    setLoading(false);
+
+    // Load runs from Supabase; fall back to localStorage
+    fetch(`/api/projects/${projectId}/runs`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error("api error");
+        const body = (await res.json()) as {
+          runs: Array<{
+            id: string;
+            project_id: string;
+            count_p0: number;
+            count_p1: number;
+            count_p2: number;
+            count_total: number;
+            created_at: string;
+            issues?: Array<{
+              issue_id: string;
+              source: string;
+              title: string;
+              priority: string;
+              category: string;
+              description: string | null;
+            }>;
+          }>;
+        };
+        setRuns(
+          body.runs.map((r) => ({
+            id: r.id,
+            projectId: r.project_id,
+            createdAt: r.created_at,
+            counts: {
+              p0: r.count_p0,
+              p1: r.count_p1,
+              p2: r.count_p2,
+              total: r.count_total,
+            },
+            issues: (r.issues ?? []).map((i) => ({
+              id: i.issue_id,
+              source: i.source as "github" | "browser",
+              title: i.title,
+              priority: i.priority as "P0" | "P1" | "P2",
+              category: i.category,
+              description: i.description ?? undefined,
+            })),
+          })),
+        );
+      })
+      .catch(() => {
+        // Supabase unavailable — use localStorage cache
+        setRuns(loadRuns(projectId));
+      })
+      .finally(() => setLoading(false));
   }, [projectId]);
 
   if (loading) return <DetailLoadingState label="Loading project..." />;

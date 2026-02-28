@@ -5,21 +5,27 @@ import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ArrowLeft,
+  Check,
   ExternalLink,
   Github,
   Globe,
   Link2,
   Loader2,
+  Pencil,
   Play,
+  Plus,
   RefreshCw,
   Trash2,
+  X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { DetailLoadingState } from "@/components/browserqa/LoadingStates";
 import {
   getProjectById,
+  patchProject,
   type ProjectConfig,
 } from "@/lib/browserqa/project-store";
 import {
@@ -87,6 +93,37 @@ export function ProjectRunClient({ projectId }: Props) {
   const [scanStatus, setScanStatus] = useState<string | null>(null);
   const [error, setError] = useState("");
   const abortRef = useRef<AbortController | null>(null);
+  const [editingUrl, setEditingUrl] = useState(false);
+  const [repoInput, setRepoInput] = useState("");
+  const [urlInput, setUrlInput] = useState("");
+
+  const saveRepo = () => {
+    const val = repoInput.trim();
+    if (!val) return;
+    const url = val.startsWith("http") ? val : `https://github.com/${val}`;
+    const updated = patchProject(projectId, { githubRepo: url });
+    if (updated) setProject(updated);
+    setRepoInput("");
+    void fetch(`/api/projects/${projectId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ githubRepo: url }),
+    }).catch(() => {});
+  };
+
+  const saveUrl = () => {
+    const val = urlInput.trim();
+    if (!val) return;
+    const updated = patchProject(projectId, { websiteUrl: val });
+    if (updated) setProject(updated);
+    setEditingUrl(false);
+    setUrlInput("");
+    void fetch(`/api/projects/${projectId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ websiteUrl: val }),
+    }).catch(() => {});
+  };
 
   useEffect(() => {
     setProject(getProjectById(projectId));
@@ -197,18 +234,36 @@ export function ProjectRunClient({ projectId }: Props) {
       // ── Persist run record ────────────────────────────────────
       if (collected.length > 0) {
         setScanStatus("Saving run…");
-        saveRun({
-          id: makeRunId(),
-          projectId,
-          createdAt: new Date().toISOString(),
-          issues: collected,
-          counts: {
-            p0: collected.filter((i) => i.priority === "P0").length,
-            p1: collected.filter((i) => i.priority === "P1").length,
-            p2: collected.filter((i) => i.priority === "P2").length,
-            total: collected.length,
-          },
-        });
+        const runId = makeRunId();
+        const createdAt = new Date().toISOString();
+        const counts = {
+          p0: collected.filter((i) => i.priority === "P0").length,
+          p1: collected.filter((i) => i.priority === "P1").length,
+          p2: collected.filter((i) => i.priority === "P2").length,
+          total: collected.length,
+        };
+
+        // Save to localStorage
+        saveRun({ id: runId, projectId, createdAt, issues: collected, counts });
+
+        // Sync to Supabase (best-effort)
+        void fetch(`/api/projects/${projectId}/runs`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            id: runId,
+            createdAt,
+            counts,
+            issues: collected.map((i) => ({
+              id: i.id,
+              source: i.source,
+              title: i.title,
+              priority: i.priority,
+              category: i.category,
+              description: i.description,
+            })),
+          }),
+        }).catch(() => {});
       }
 
       setScanStatus(
@@ -268,12 +323,12 @@ export function ProjectRunClient({ projectId }: Props) {
         </div>
 
         {/* GitHub repo */}
-        {project.githubRepo ? (
-          <div className="space-y-1.5">
-            <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
-              <Github className="h-3.5 w-3.5" />
-              Repository
-            </p>
+        <div className="space-y-1.5">
+          <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
+            <Github className="h-3.5 w-3.5" />
+            Repository
+          </p>
+          {project.githubRepo ? (
             <a
               href={project.githubRepo}
               target="_blank"
@@ -283,27 +338,85 @@ export function ProjectRunClient({ projectId }: Props) {
               <ExternalLink className="h-3.5 w-3.5 shrink-0" />
               {project.githubRepo.replace("https://github.com/", "")}
             </a>
-          </div>
-        ) : null}
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              <Input
+                value={repoInput}
+                onChange={(e) => setRepoInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveRepo();
+                  if (e.key === "Escape") setRepoInput("");
+                }}
+                placeholder="owner/repo or GitHub URL"
+                className="h-7 border-slate-700 bg-slate-900 text-xs text-slate-100 placeholder:text-slate-600"
+              />
+              {repoInput.trim() ? (
+                <Button size="sm" onClick={saveRepo} className="h-6 bg-emerald-600 px-2 text-xs hover:bg-emerald-500">
+                  <Check className="mr-1 h-3 w-3" /> Save
+                </Button>
+              ) : null}
+            </div>
+          )}
+        </div>
 
         {/* Website URL */}
-        {project.websiteUrl ? (
-          <div className="space-y-1.5">
-            <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
-              <Globe className="h-3.5 w-3.5" />
-              Website
-            </p>
-            <a
-              href={project.websiteUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 break-all rounded-md border border-slate-800 bg-slate-900/60 p-2.5 text-xs text-blue-400 hover:text-blue-300 hover:underline"
+        <div className="space-y-1.5">
+          <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
+            <Globe className="h-3.5 w-3.5" />
+            Website
+          </p>
+          {editingUrl ? (
+            <div className="flex flex-col gap-1.5">
+              <Input
+                autoFocus
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveUrl();
+                  if (e.key === "Escape") { setEditingUrl(false); setUrlInput(""); }
+                }}
+                placeholder="https://yoursite.com"
+                className="h-7 border-slate-700 bg-slate-900 text-xs text-slate-100 placeholder:text-slate-600"
+              />
+              <div className="flex gap-1">
+                <Button size="sm" onClick={saveUrl} className="h-6 flex-1 bg-emerald-600 px-2 text-xs hover:bg-emerald-500">
+                  <Check className="mr-1 h-3 w-3" /> Save
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => { setEditingUrl(false); setUrlInput(""); }} className="h-6 px-2 text-xs text-slate-400 hover:text-slate-100">
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+          ) : project.websiteUrl ? (
+            <div className="group flex items-start gap-1.5">
+              <a
+                href={project.websiteUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex min-w-0 flex-1 items-center gap-1.5 break-all rounded-md border border-slate-800 bg-slate-900/60 p-2.5 text-xs text-blue-400 hover:text-blue-300 hover:underline"
+              >
+                <Link2 className="h-3.5 w-3.5 shrink-0" />
+                {project.websiteUrl}
+              </a>
+              <button
+                type="button"
+                onClick={() => { setUrlInput(project.websiteUrl ?? ""); setEditingUrl(true); }}
+                className="mt-2 shrink-0 text-slate-600 opacity-0 transition-opacity hover:text-slate-300 group-hover:opacity-100"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setEditingUrl(true)}
+              className="flex w-full items-center gap-1.5 rounded-md border border-dashed border-slate-700 p-2.5 text-xs text-slate-500 transition-colors hover:border-slate-500 hover:text-slate-300"
             >
-              <Link2 className="h-3.5 w-3.5 shrink-0" />
-              {project.websiteUrl}
-            </a>
-          </div>
-        ) : null}
+              <Plus className="h-3.5 w-3.5" />
+              Add website URL
+            </button>
+          )}
+        </div>
 
         {/* This scan summary */}
         {issues.length > 0 ? (

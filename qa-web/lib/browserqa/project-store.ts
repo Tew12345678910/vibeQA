@@ -158,6 +158,22 @@ export function updateProjectTimestamp(id: string): void {
   save(projects);
 }
 
+export function patchProject(
+  id: string,
+  patch: Partial<Pick<ProjectConfig, "githubRepo" | "websiteUrl" | "name">>,
+): ProjectConfig | null {
+  const projects = loadProjects();
+  const index = projects.findIndex((p) => p.id === id);
+  if (index === -1) return null;
+  projects[index] = {
+    ...projects[index],
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+  save(projects);
+  return projects[index];
+}
+
 export function makeVirtualProjectId(baseUrl: string): string {
   return `url_${encodeURIComponent(baseUrl)}`;
 }

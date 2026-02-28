@@ -1,10 +1,6 @@
 # VibeQA
 
-VibeQA is a learning-first QA platform for AI-assisted coding.
-
-The idea is simple: AI can already do most implementation work, so the human leverage shifts from "writing all code" to "directing, validating, and correcting AI output." This project helps developers learn that skill by doing real scans on real repos, then turning findings into fix-ready, educational issue cards.
-
-For this README, we describe the intended integrated flow as working end-to-end: the web app sends route-aware browser tasks to an AWS Bedrock Agent + Browser Use API, receives runtime findings, and merges them with code/RAG findings into one ranked report.
+VibeQA helps developers catch quality issues that AI coding tools miss ([tryvibeqa.vercel.app](https://tryvibeqa.vercel.app)). AI can write code quickly, but it often skips important details like security checks, error handling, and user experience polish. VibeQA scans your repos and tests your app in a real browser, then gives you clear, actionable feedback with fixes.
 
 ## Product Vision
 
@@ -81,7 +77,6 @@ In short: connect a repo, run a scan, and get a practical curriculum for improvi
 
 - `qa-web/`: Next.js (App Router) product UI and server routes.
 - `api/`: FastAPI service for Bedrock + Browser Use route audits.
-- `aws/`: helper example for Bedrock browser-agent wiring.
 - `qa-web/supabase/migrations/`: schema for projects/runs/issues/rules/vector chunks.
 
 ## Core Capabilities
@@ -184,12 +179,11 @@ CLOUD_BROWSER_API_KEY=
 ### Root/API env (for `api/`)
 
 ```env
-AGENTCORE_BROWSER_REGION=us-west-2 # or BEDROCK_REGION
+AGENTCORE_BROWSER_REGION=us-west-2
 BEDROCK_MODEL_ID=us.amazon.nova-pro-v1:0
-AGENTCORE_BROWSER_ID=               # optional
+AGENTCORE_BROWSER_ID=               
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
-AWS_SESSION_TOKEN=                  # if using temporary credentials
 ```
 
 ## Local Development

@@ -1,17 +1,25 @@
 import crypto from "node:crypto";
+import path from "node:path";
 
 import { z } from "zod";
 
 import { getDbClient } from "@/lib/db/client";
 import { generateAiReport } from "@/lib/ai";
-import { scanProjectFromZip, compactChecksForAi, scannerNotes } from "@/lib/project-auditor/scanner";
+import { scanProjectFromFiles, compactChecksForAi, scannerNotes } from "@/lib/project-auditor/scanner";
 import {
   browserUseFindingsSchema,
   type BrowserUseTestPlan,
   type StandardsScorecard,
 } from "@/lib/project-auditor/schemas";
 import { generateBrowserUseTestPlan } from "@/lib/project-auditor/test-plan";
-import { MAX_ZIP_BYTES } from "@/lib/project-auditor/constants";
+import {
+  BINARY_EXTENSIONS,
+  MAX_FILE_BYTES,
+  MAX_SCAN_FILES,
+  MAX_TOTAL_BYTES,
+  SKIP_DIRECTORIES,
+  TEXT_EXTENSIONS,
+} from "@/lib/project-auditor/constants";
 import { validateHostedHttpsUrl } from "@/lib/utils/urlSafety";
 
 type CardPriority = "P0" | "P1" | "P2";
@@ -82,7 +90,6 @@ type ScanState = {
   routes: string[];
   endpointCount: number;
   artifacts: {
-    sourceZipPath: string;
     scorecardPath: string;
     testPlanPath: string;
     aiReportPath: string;
@@ -212,7 +219,6 @@ async function ensureBucket(): Promise<void> {
   if (!data.some((bucket) => bucket.name === BUCKET)) {
     const created = await client.storage.createBucket(BUCKET, {
       public: false,
-      fileSizeLimit: `${MAX_ZIP_BYTES}`,
     });
     if (created.error && !created.error.message.toLowerCase().includes("already exists")) {
       throw new Error(`Failed to create Supabase bucket '${BUCKET}': ${created.error.message}`);
@@ -274,8 +280,10 @@ function parseGithubRepoUrl(repoUrl: string): {
   }
 
   let branch: string | null = null;
-  if (segments[2] === "tree" && segments[3]) {
-    branch = decodeURIComponent(segments.slice(3).join("/"));
+  if ((segments[2] === "tree" || segments[2] === "blob") && segments[3]) {
+    // GitHub URLs may include extra path segments after branch (e.g. /tree/main/src).
+    // For tree/blob scanning we only need the branch hint itself.
+    branch = decodeURIComponent(segments[3]);
   }
 
   return {
@@ -294,106 +302,277 @@ function githubApiHeaders(githubToken: string): Record<string, string> {
   };
 }
 
-async function downloadZip(args: {
-  url: string;
-  authorizationHeader?: string;
-}): Promise<Buffer> {
-  const response = await fetch(args.url, {
-    headers: {
-      Accept: "application/zip",
-      "User-Agent": "QA-Pipeline-Scanner/1.0",
-      ...(args.authorizationHeader
-        ? { Authorization: args.authorizationHeader }
-        : {}),
-    },
-    signal: AbortSignal.timeout(45_000),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to download repository archive (${response.status})`);
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
-  if (arrayBuffer.byteLength > MAX_ZIP_BYTES) {
-    throw new Error(`ZIP exceeds max size ${Math.floor(MAX_ZIP_BYTES / (1024 * 1024))}MB`);
-  }
-
-  return Buffer.from(arrayBuffer);
+function githubHeaders(githubToken?: string): Record<string, string> {
+  return githubToken
+    ? githubApiHeaders(githubToken)
+    : {
+        Accept: "application/vnd.github+json",
+        "User-Agent": "QA-Pipeline-Scanner/1.0",
+      };
 }
 
-async function resolveDefaultBranch(args: {
+function shouldSkipByDirectory(filePath: string): boolean {
+  const segments = filePath.split("/");
+  return segments.some((segment) => SKIP_DIRECTORIES.has(segment));
+}
+
+function isBinaryByExtension(filePath: string): boolean {
+  const ext = path.extname(filePath).toLowerCase();
+  return ext.length > 0 && BINARY_EXTENSIONS.has(ext);
+}
+
+function isTextCandidate(filePath: string): boolean {
+  const ext = path.extname(filePath).toLowerCase();
+  if (!ext) {
+    const base = path.basename(filePath).toLowerCase();
+    return ["dockerfile", "makefile", "readme", "license", ".env"].includes(base);
+  }
+  return TEXT_EXTENSIONS.has(ext);
+}
+
+type GitTreeEntry = {
+  path: string;
+  mode: string;
+  type: "blob" | "tree" | "commit";
+  sha: string;
+  size?: number;
+};
+
+type GitTreePayload = {
+  tree: GitTreeEntry[];
+  truncated?: boolean;
+};
+
+type GitBlobPayload = {
+  content?: string;
+  encoding?: string;
+  size?: number;
+  truncated?: boolean;
+};
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+
+  const runner = async () => {
+    while (true) {
+      const current = cursor;
+      cursor += 1;
+      if (current >= items.length) return;
+      results[current] = await worker(items[current] as T);
+    }
+  };
+
+  const workers = Array.from({ length: Math.max(1, Math.min(concurrency, items.length)) }, () => runner());
+  await Promise.all(workers);
+  return results;
+}
+
+async function fetchRepoMetadata(args: {
   owner: string;
   repo: string;
-  githubToken: string;
-}): Promise<string | null> {
+  githubToken?: string;
+}): Promise<{ defaultBranch: string | null }> {
+  const response = await fetch(`https://api.github.com/repos/${args.owner}/${args.repo}`, {
+    headers: githubHeaders(args.githubToken),
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (response.ok) {
+    const body = (await response.json()) as { default_branch?: string };
+    return {
+      defaultBranch: typeof body.default_branch === "string" ? body.default_branch : null,
+    };
+  }
+
+  if (response.status === 404) {
+    if (!args.githubToken) {
+      throw new Error("Repository not accessible. Connect GitHub to scan private repositories.");
+    }
+    throw new Error("Repository not found or token has no access.");
+  }
+
+  if (response.status === 401) {
+    throw new Error("GitHub token is invalid or expired. Reconnect GitHub and try again.");
+  }
+
+  if (response.status === 403) {
+    throw new Error("GitHub API access denied (403). Check token scopes or rate limits.");
+  }
+
+  throw new Error(`GitHub repository lookup failed (${response.status}).`);
+}
+
+async function fetchRepoTreeByRef(args: {
+  owner: string;
+  repo: string;
+  ref: string;
+  githubToken?: string;
+}): Promise<GitTreeEntry[] | null> {
   const response = await fetch(
-    `https://api.github.com/repos/${args.owner}/${args.repo}`,
+    `https://api.github.com/repos/${args.owner}/${args.repo}/git/trees/${encodeURIComponent(args.ref)}?recursive=1`,
     {
-      headers: githubApiHeaders(args.githubToken),
-      signal: AbortSignal.timeout(15_000),
+      headers: githubHeaders(args.githubToken),
+      signal: AbortSignal.timeout(20_000),
     },
   );
-  if (!response.ok) {
+
+  if (response.ok) {
+    const payload = (await response.json()) as GitTreePayload;
+    if (payload.truncated) {
+      throw new Error("Repository tree is too large for GitHub tree API recursion.");
+    }
+    return Array.isArray(payload.tree) ? payload.tree : [];
+  }
+
+  if (response.status === 404) {
     return null;
   }
 
-  const body = (await response.json()) as { default_branch?: string };
-  return typeof body.default_branch === "string"
-    ? body.default_branch
-    : null;
+  if (response.status === 401) {
+    throw new Error("GitHub token is invalid or expired. Reconnect GitHub and try again.");
+  }
+
+  if (response.status === 403) {
+    const remaining = response.headers.get("x-ratelimit-remaining");
+    if (remaining === "0") {
+      throw new Error("GitHub API rate limit reached while reading repository tree.");
+    }
+    throw new Error("GitHub API access denied (403) while reading repository tree.");
+  }
+
+  if (response.status === 409) {
+    throw new Error("Repository is empty or unavailable for tree scan.");
+  }
+
+  throw new Error(`GitHub tree API failed (${response.status}) for ref '${args.ref}'.`);
 }
 
-async function downloadGithubArchive(
-  repoUrl: string,
-  githubToken?: string,
-): Promise<Buffer> {
-  const parsed = parseGithubRepoUrl(repoUrl);
-  const branchCandidates = new Set<string>();
-  if (parsed.branch) {
-    branchCandidates.add(parsed.branch);
+function selectCandidateBlobs(entries: GitTreeEntry[]): Array<{ path: string; sha: string; size: number }> {
+  const candidates: Array<{ path: string; sha: string; size: number }> = [];
+
+  for (const entry of entries) {
+    if (entry.type !== "blob") continue;
+
+    const filePath = entry.path.replace(/\\/g, "/");
+    if (!filePath) continue;
+    if (shouldSkipByDirectory(filePath)) continue;
+    if (isBinaryByExtension(filePath)) continue;
+    if (!isTextCandidate(filePath)) continue;
+
+    const size = typeof entry.size === "number" ? entry.size : 0;
+    if (size > MAX_FILE_BYTES) continue;
+
+    candidates.push({
+      path: filePath,
+      sha: entry.sha,
+      size,
+    });
   }
 
-  if (githubToken) {
-    const defaultBranch = await resolveDefaultBranch({
+  candidates.sort((a, b) => a.path.localeCompare(b.path));
+
+  if (candidates.length > MAX_SCAN_FILES) {
+    throw new Error(`File scan cap exceeded (${MAX_SCAN_FILES} files)`);
+  }
+
+  const projectedBytes = candidates.reduce((acc, candidate) => acc + candidate.size, 0);
+  if (projectedBytes > MAX_TOTAL_BYTES) {
+    throw new Error(
+      `Total scanned bytes exceeded cap (${Math.floor(MAX_TOTAL_BYTES / (1024 * 1024))}MB)`,
+    );
+  }
+
+  return candidates;
+}
+
+async function fetchBlobContent(args: {
+  owner: string;
+  repo: string;
+  sha: string;
+  githubToken?: string;
+}): Promise<string | null> {
+  const response = await fetch(
+    `https://api.github.com/repos/${args.owner}/${args.repo}/git/blobs/${encodeURIComponent(args.sha)}`,
+    {
+      headers: githubHeaders(args.githubToken),
+      signal: AbortSignal.timeout(20_000),
+    },
+  );
+
+  if (!response.ok) {
+    if (response.status === 404) return null;
+    if (response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0") {
+      throw new Error("GitHub API rate limit reached while reading file blobs.");
+    }
+    throw new Error(`GitHub blob API failed (${response.status})`);
+  }
+
+  const payload = (await response.json()) as GitBlobPayload;
+  if (payload.truncated) return null;
+  if (typeof payload.size === "number" && payload.size > MAX_FILE_BYTES) return null;
+
+  if (payload.encoding === "base64" && typeof payload.content === "string") {
+    return Buffer.from(payload.content.replace(/\n/g, ""), "base64").toString("utf8");
+  }
+
+  if (typeof payload.content === "string") {
+    return payload.content;
+  }
+
+  return null;
+}
+
+async function loadGithubSourceFiles(args: {
+  repoUrl: string;
+  githubToken?: string;
+}): Promise<Array<{ path: string; content: string }>> {
+  const parsed = parseGithubRepoUrl(args.repoUrl);
+  const metadata = await fetchRepoMetadata({
+    owner: parsed.owner,
+    repo: parsed.repo,
+    githubToken: args.githubToken,
+  });
+
+  const refCandidates = new Set<string>();
+  if (parsed.branch) refCandidates.add(parsed.branch);
+  if (metadata.defaultBranch) refCandidates.add(metadata.defaultBranch);
+  refCandidates.add("main");
+  refCandidates.add("master");
+
+  let tree: GitTreeEntry[] | null = null;
+  for (const ref of refCandidates) {
+    tree = await fetchRepoTreeByRef({
       owner: parsed.owner,
       repo: parsed.repo,
-      githubToken,
+      ref,
+      githubToken: args.githubToken,
     });
-    if (defaultBranch) {
-      branchCandidates.add(defaultBranch);
-    }
+    if (tree) break;
   }
 
-  branchCandidates.add("main");
-  branchCandidates.add("master");
-
-  const branches = [...branchCandidates];
-  let lastError = "Repository archive could not be downloaded";
-
-  if (githubToken) {
-    for (const branch of branches) {
-      const archiveUrl = `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/zipball/${encodeURIComponent(branch)}`;
-      try {
-        return await downloadZip({
-          url: archiveUrl,
-          authorizationHeader: `token ${githubToken}`,
-        });
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : lastError;
-      }
-    }
+  if (!tree) {
+    throw new Error("Unable to resolve repository tree. Check repository URL and branch.");
   }
 
-  for (const branch of branches) {
-    const archiveUrl = `https://codeload.github.com/${parsed.owner}/${parsed.repo}/zip/refs/heads/${encodeURIComponent(branch)}`;
-    try {
-      return await downloadZip({ url: archiveUrl });
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : lastError;
-    }
-  }
+  const candidates = selectCandidateBlobs(tree);
 
-  throw new Error(lastError);
+  const contents = await mapWithConcurrency(candidates, 8, async (candidate) => {
+    const content = await fetchBlobContent({
+      owner: parsed.owner,
+      repo: parsed.repo,
+      sha: candidate.sha,
+      githubToken: args.githubToken,
+    });
+    if (content === null) return null;
+    return { path: candidate.path, content };
+  });
+
+  return contents.filter((entry): entry is { path: string; content: string } => entry !== null);
 }
 
 function checkToCard(check: StandardsScorecard["checks"][number], index: number, createdAt: string): ImproveCard {
@@ -555,16 +734,15 @@ function toPublicProjectName(input?: string, fallback = "my-app"): string {
 }
 
 async function buildScanState(args: {
-  zipBytes: Buffer;
-  sourceLabel: string;
+  sourceFiles: Array<{ path: string; content: string }>;
   projectName?: string;
 }): Promise<ScanState> {
   const scanId = nextScanId();
   const scanPrefix = makeScanPrefix(scanId);
   const generatedAt = new Date().toISOString();
 
-  const scan = await scanProjectFromZip({
-    zipBytes: args.zipBytes,
+  const scan = await scanProjectFromFiles({
+    files: args.sourceFiles,
     projectNameHint: toPublicProjectName(args.projectName),
   });
 
@@ -609,7 +787,6 @@ async function buildScanState(args: {
     routes: scan.uiRoutes,
     endpointCount: scan.scorecard.endpoints.length,
     artifacts: {
-      sourceZipPath: `${scanPrefix}/source.zip`,
       scorecardPath: `${scanPrefix}/standards_scorecard.json`,
       testPlanPath: `${scanPrefix}/browser_use_test_plan.json`,
       aiReportPath: `${scanPrefix}/ai_report.md`,
@@ -619,7 +796,6 @@ async function buildScanState(args: {
 
   await ensureBucket();
   await Promise.all([
-    uploadBuffer(state.artifacts.sourceZipPath, args.zipBytes, "application/zip"),
     uploadJson(state.artifacts.scorecardPath, state.scorecard),
     uploadJson(state.artifacts.testPlanPath, state.browserUseTestPlan),
     uploadText(state.artifacts.aiReportPath, ai.markdown, "text/markdown; charset=utf-8"),
@@ -849,12 +1025,14 @@ async function pollRemoteFindings(runState: RunState, scan: ScanState): Promise<
 
 export async function scanGithubRepo(input: unknown) {
   const parsed = githubScanRequestSchema.parse(input);
-  const zipBytes = await downloadGithubArchive(parsed.repoUrl, parsed.githubToken);
+  const sourceFiles = await loadGithubSourceFiles({
+    repoUrl: parsed.repoUrl,
+    githubToken: parsed.githubToken,
+  });
   const guessedName = parseGithubRepoUrl(parsed.repoUrl).repo;
 
   const state = await buildScanState({
-    zipBytes,
-    sourceLabel: parsed.repoUrl,
+    sourceFiles,
     projectName: parsed.projectName ?? guessedName,
   });
 

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  FileWarning,
+  FolderKanban,
   LogIn,
   PlusCircle,
   Settings,
@@ -24,8 +24,8 @@ import {
 } from "@/components/ui/sidebar";
 
 const navItems = [
+  { href: "/projects", label: "All Projects", icon: FolderKanban },
   { href: "/projects/new", label: "New Project", icon: PlusCircle },
-  { href: "/issues", label: "Issues", icon: FileWarning },
   { href: "/profile", label: "Profile", icon: UserCircle },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
@@ -39,7 +39,7 @@ export function AppSidebar() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
-              <Link href="/projects/new">
+              <Link href="/projects">
                 <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-blue-500 text-slate-950">
                   <span className="text-sm font-bold">QA</span>
                 </div>

@@ -25,6 +25,11 @@ type ScannedFile = {
   bytes: number;
 };
 
+type InputFile = {
+  path: string;
+  content: string;
+};
+
 type Evidence = {
   file: string;
   lineStart: number;
@@ -1007,20 +1012,64 @@ async function extractFilesFromZip(zipBytes: Buffer): Promise<{
   return { files, scannedBytes, skippedLargeFiles };
 }
 
-export async function scanProjectFromZip(args: {
-  zipBytes: Buffer;
-  projectNameHint: string;
-}): Promise<ScanOutput> {
-  const extracted = await extractFilesFromZip(args.zipBytes);
-  const router = detectRouter(extracted.files);
-  const endpoints = extractEndpoints(extracted.files);
-  const uiRoutes = detectUiRoutes(extracted.files);
+function extractFilesFromInputs(inputFiles: InputFile[]): {
+  files: ScannedFile[];
+  scannedBytes: number;
+  skippedLargeFiles: number;
+} {
+  const files: ScannedFile[] = [];
+  let scannedBytes = 0;
+  let skippedLargeFiles = 0;
 
-  const deps = getDependencies(extracted.files);
+  for (const inputFile of inputFiles) {
+    const safePath = normalizeZipPath(inputFile.path);
+    if (shouldSkipByDirectory(safePath)) continue;
+    if (isBinaryByExtension(safePath)) continue;
+    if (!isTextCandidate(safePath)) continue;
+
+    if (files.length >= MAX_SCAN_FILES) {
+      throw new Error(`File scan cap exceeded (${MAX_SCAN_FILES} files)`);
+    }
+
+    const data = Buffer.from(inputFile.content, "utf8");
+    if (data.byteLength > MAX_FILE_BYTES) {
+      skippedLargeFiles += 1;
+      continue;
+    }
+    if (hasNullByte(data)) continue;
+
+    scannedBytes += data.byteLength;
+    if (scannedBytes > MAX_TOTAL_BYTES) {
+      throw new Error(
+        `Total scanned bytes exceeded cap (${Math.floor(MAX_TOTAL_BYTES / (1024 * 1024))}MB)`,
+      );
+    }
+
+    files.push({
+      path: safePath,
+      content: inputFile.content,
+      bytes: data.byteLength,
+    });
+  }
+
+  return { files, scannedBytes, skippedLargeFiles };
+}
+
+function buildScanOutput(args: {
+  files: ScannedFile[];
+  scannedBytes: number;
+  skippedLargeFiles: number;
+  projectNameHint: string;
+}): ScanOutput {
+  const router = detectRouter(args.files);
+  const endpoints = extractEndpoints(args.files);
+  const uiRoutes = detectUiRoutes(args.files);
+
+  const deps = getDependencies(args.files);
   const stack = buildStack(deps.dependencies, deps.devDependencies);
 
   const checks = evaluateChecks({
-    files: extracted.files,
+    files: args.files,
     endpoints,
     stack,
   });
@@ -1043,11 +1092,37 @@ export async function scanProjectFromZip(args: {
     detectedStack: stack,
     uiRoutes,
     stats: {
-      scannedFiles: extracted.files.length,
-      scannedBytes: extracted.scannedBytes,
-      skippedLargeFiles: extracted.skippedLargeFiles,
+      scannedFiles: args.files.length,
+      scannedBytes: args.scannedBytes,
+      skippedLargeFiles: args.skippedLargeFiles,
     },
   };
+}
+
+export async function scanProjectFromZip(args: {
+  zipBytes: Buffer;
+  projectNameHint: string;
+}): Promise<ScanOutput> {
+  const extracted = await extractFilesFromZip(args.zipBytes);
+  return buildScanOutput({
+    files: extracted.files,
+    scannedBytes: extracted.scannedBytes,
+    skippedLargeFiles: extracted.skippedLargeFiles,
+    projectNameHint: args.projectNameHint,
+  });
+}
+
+export async function scanProjectFromFiles(args: {
+  files: InputFile[];
+  projectNameHint: string;
+}): Promise<ScanOutput> {
+  const extracted = extractFilesFromInputs(args.files);
+  return buildScanOutput({
+    files: extracted.files,
+    scannedBytes: extracted.scannedBytes,
+    skippedLargeFiles: extracted.skippedLargeFiles,
+    projectNameHint: args.projectNameHint,
+  });
 }
 
 export function compactChecksForAi(scorecard: StandardsScorecard) {

@@ -15,6 +15,7 @@ export type ProjectConfig = {
   sourceType?: "local" | "github";
   projectPath: string;
   githubRepo?: string;
+  websiteUrl?: string;
   baseUrl: string;
   guidelinePath?: string;
   routes: string[];
@@ -60,6 +61,7 @@ function safeParse(raw: string | null): ProjectConfig[] {
               : ("local" as const),
           projectPath: String(entry.projectPath ?? ""),
           githubRepo: entry.githubRepo ? String(entry.githubRepo) : undefined,
+          websiteUrl: entry.websiteUrl ? String(entry.websiteUrl) : undefined,
           baseUrl: String(entry.baseUrl ?? ""),
           guidelinePath: entry.guidelinePath
             ? String(entry.guidelinePath)
@@ -102,6 +104,7 @@ export function createProject(input: {
   sourceType?: "local" | "github";
   projectPath: string;
   githubRepo?: string;
+  websiteUrl?: string;
   baseUrl: string;
   guidelinePath?: string;
   routes?: string[];
@@ -122,6 +125,7 @@ export function createProject(input: {
     sourceType: input.sourceType ?? "local",
     projectPath: input.projectPath,
     githubRepo: input.githubRepo,
+    websiteUrl: input.websiteUrl,
     baseUrl: input.baseUrl,
     guidelinePath: input.guidelinePath,
     routes: input.routes ?? [],
@@ -152,6 +156,22 @@ export function updateProjectTimestamp(id: string): void {
     updatedAt: new Date().toISOString(),
   };
   save(projects);
+}
+
+export function patchProject(
+  id: string,
+  patch: Partial<Pick<ProjectConfig, "githubRepo" | "websiteUrl" | "name">>,
+): ProjectConfig | null {
+  const projects = loadProjects();
+  const index = projects.findIndex((p) => p.id === id);
+  if (index === -1) return null;
+  projects[index] = {
+    ...projects[index],
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+  save(projects);
+  return projects[index];
 }
 
 export function makeVirtualProjectId(baseUrl: string): string {

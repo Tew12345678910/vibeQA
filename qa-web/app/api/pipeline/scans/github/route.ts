@@ -6,9 +6,15 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const githubToken = request.headers.get("x-github-token")?.trim();
+    const bodyToken =
+      typeof body === "object" &&
+      body !== null &&
+      typeof (body as { githubToken?: unknown }).githubToken === "string"
+        ? (body as { githubToken: string }).githubToken.trim()
+        : "";
     const result = await scanGithubRepo({
       ...(typeof body === "object" && body !== null ? body : {}),
-      githubToken: githubToken || undefined,
+      githubToken: githubToken || bodyToken || undefined,
     });
     return NextResponse.json(result, { status: 201 });
   } catch (error) {

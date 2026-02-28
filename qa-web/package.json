@@ -8,7 +8,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "db:setup": "tsx scripts/setup-db.ts"
+    "db:setup": "tsx scripts/setup-db.ts",
+    "rules:extract": "tsx scripts/extract-security-rules.ts",
+    "rules:upsert:api": "tsx scripts/upsert-api-audit-rules.ts",
+    "rules:upsert:security": "tsx scripts/upsert-security-rules.ts",
+    "rules:upsert:all": "pnpm rules:upsert:api && pnpm rules:upsert:security"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.53.0",

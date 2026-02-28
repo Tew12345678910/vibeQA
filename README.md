@@ -33,11 +33,8 @@ Required for the browser agent:
 
 ```env
 AGENTCORE_BROWSER_REGION=us-west-2   # or BEDROCK_REGION
-# AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY (or default credential chain)
-```
-
-```env
-BEDROCK_MODEL_ID=us.amazon.nova-pro-v1:0
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY 
 AGENTCORE_BROWSER_ID=your-browser-tool-id
 ```
 

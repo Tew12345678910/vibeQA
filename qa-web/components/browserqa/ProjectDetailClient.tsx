@@ -112,7 +112,7 @@ export function ProjectDetailClient({ projectId }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState<TabType>("config");
+  const [activeTab, setActiveTab] = useState<TabType>("runs");
 
   // runs tab filter state
   const [runsSearch, setRunsSearch] = useState("");

@@ -1,5 +1,11 @@
-import { redirect } from "next/navigation";
+import { Suspense } from "react";
+
+import { ProjectsPageClient } from "@/components/browserqa/ProjectsPageClient";
 
 export default function ProjectsPage() {
-  redirect("/projects/new");
+  return (
+    <Suspense>
+      <ProjectsPageClient />
+    </Suspense>
+  );
 }

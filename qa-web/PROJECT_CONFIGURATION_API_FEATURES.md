@@ -46,12 +46,13 @@ No legacy Project Auditor compatibility routes are part of this pipeline.
 6. UI calls `POST /api/pipeline/scans/github` with:
    - `repoUrl`
    - `projectName` (optional)
+7. Backend resolves repository tree via GitHub REST API and fetches text blobs file-by-file for static scan.
 
 ## 5. Storage (Supabase)
 All pipeline artifacts are stored in Supabase Storage bucket `qa-project-artifacts` (or `SUPABASE_STORAGE_BUCKET`).
+Repository files are read from GitHub REST API in-memory and are not persisted to Supabase.
 
 ### Scan paths
-- `pipeline/scans/<scanId>/source.zip` (internal GitHub archive snapshot)
 - `pipeline/scans/<scanId>/standards_scorecard.json`
 - `pipeline/scans/<scanId>/browser_use_test_plan.json`
 - `pipeline/scans/<scanId>/ai_report.md`

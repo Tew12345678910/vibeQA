@@ -108,6 +108,7 @@ export function NewProjectPipelineClient() {
         body: JSON.stringify({
           repoUrl: url,
           projectName: projectName.trim() || undefined,
+          githubToken: githubToken || undefined,
         }),
       });
 

@@ -10,6 +10,11 @@ type RuleRow = {
   priority: string;
   description: string;
   contents: Record<string, unknown>;
+  targets: string[];
+  signals: string[];
+  skill_tags: string[];
+  version: string;
+  lesson_enabled: boolean;
   enabled: boolean;
 };
 
@@ -17,13 +22,31 @@ type RuleInput = {
   id: string;
   title: string;
   category: string;
+  priority?: string;
   critical?: boolean;
+  specVersion?: string;
   sourceSection?: string;
   ruleKind?: string;
+  standardRefs?: Array<{ name: string; control: string; url: string }>;
+  supersedes?: string[];
+  overlapsWith?: string[];
   scope: string;
   howToDetect: string;
   pass: string;
   fail: string;
+};
+
+type RuleEducation = {
+  why_it_matters: string;
+  rule_of_thumb: string;
+  common_pitfalls: string[];
+};
+
+type RuleRemediation = {
+  recommended_pattern?: string;
+  recommended_envelope?: Record<string, unknown>;
+  implementation_steps: string[];
+  acceptance_criteria: string[];
 };
 
 function loadDotEnvLocal(): void {
@@ -56,19 +79,332 @@ function loadDotEnvLocal(): void {
 
 function defaultPriority(category: string, critical?: boolean): string {
   if (critical) return "P0";
-  if (["AUT", "VAL", "RLM", "LOG", "TMO"].includes(category)) return "P1";
+  if (["AUT", "VAL", "RLM", "LOG", "TMO", "SECAPI"].includes(category)) return "P1";
   return "P2";
 }
 
+function uniq(items: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    const value = item.trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+function inferTargets(input: RuleInput): string[] {
+  const scope = input.scope.toLowerCase();
+  const baseRouteTargets = [
+    "app/api/**/route.ts",
+    "app/api/**/*.ts",
+    "pages/api/**/*.ts",
+    "src/app/api/**/route.ts",
+    "src/pages/api/**/*.ts",
+    "server/**/*.ts",
+  ];
+
+  const structuralTargets = [
+    "src/**/*.ts",
+    "server/**/*.ts",
+    "app/**/*.ts",
+    "pages/**/*.ts",
+    "middleware/**/*.ts",
+    "**/middleware.ts",
+    "**/middleware.js",
+    "**/middleware.mjs",
+    "**/package.json",
+  ];
+
+  if (scope.includes("package.json") || scope.includes("dependencies")) {
+    return ["package.json", "**/package.json"];
+  }
+
+  if (scope.includes("dto") || scope.includes("schema") || scope.includes("validator")) {
+    return uniq([
+      ...baseRouteTargets,
+      "**/dto/**/*.ts",
+      "**/schema/**/*.ts",
+      "**/schemas/**/*.ts",
+      "**/validator/**/*.ts",
+      "**/validators/**/*.ts",
+    ]);
+  }
+
+  if (scope.includes("middleware") || scope.includes("guard") || scope.includes("bootstrap")) {
+    return uniq([
+      ...baseRouteTargets,
+      "middleware/**/*.ts",
+      "**/middleware.ts",
+      "**/middleware.js",
+      "**/middleware.mjs",
+      "**/guards/**/*.ts",
+      "**/interceptors/**/*.ts",
+      "**/src/main.ts",
+    ]);
+  }
+
+  if (scope.includes("logger")) {
+    return uniq([
+      ...baseRouteTargets,
+      "**/logger/**/*.ts",
+      "**/lib/logger.ts",
+      "middleware/**/*.ts",
+    ]);
+  }
+
+  if (input.category === "SCAN_SCOPE" || input.category === "QUALITY_GATE") {
+    return ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.mjs", "package.json"];
+  }
+
+  if (input.category === "STRUCTURAL" || input.category === "STRUCTURAL_EXPECTED") {
+    return structuralTargets;
+  }
+
+  return baseRouteTargets;
+}
+
+function inferSignals(input: RuleInput): string[] {
+  const byCategory: Record<string, string[]> = {
+    APC: ["NextResponse.json(", "res.status(", "res.json(", "Allow", "Problem Details"],
+    VAL: ["zod", "joi", "yup", "safeParse(", "ValidationPipe", "schema.parse("],
+    AUT: ["getServerSession(", "jwt.verify(", "Authorization", "session", "role", "permission"],
+    RLM: ["rateLimit(", "@upstash/ratelimit", "Retry-After", "X-RateLimit-", "throttler"],
+    IDP: ["Idempotency-Key", "x-idempotency-key", "idempotency", "replay", "409"],
+    TMO: ["AbortController", "timeout", "maxTimeMS", "statement_timeout", "retry", "backoff"],
+    LOG: ["requestId", "traceId", "logger.", "pino", "winston", "morgan"],
+    PAG: ["limit", "offset", "cursor", "pageSize", "hasNextPage", "totalPages"],
+    SECAPI: ["cors(", "Access-Control-Allow-Origin", "Cache-Control", "no-store", "fetch(", "URL("],
+    STRUCTURAL: ["middleware", "guard", "module", "bootstrap", "infrastructure"],
+    STRUCTURAL_EXPECTED: ["middleware", "guard", "module", "lib/", "shared"],
+    SCAN_SCOPE: ["node_modules", "dist", ".next", "*.test.ts", "*.spec.ts", "static analysis"],
+    QUALITY_GATE: ["coverage", "violation", "summary", "stack_detected", "unparseable"],
+  };
+
+  const combinedText = `${input.howToDetect} ${input.pass} ${input.fail}`;
+  const callSeeds = Array.from(
+    new Set(combinedText.match(/\b[A-Za-z_][A-Za-z0-9_.]{2,}\(/g) ?? []),
+  ).slice(0, 8);
+
+  return uniq([...(byCategory[input.category] ?? []), ...callSeeds]);
+}
+
+function inferSkillTags(input: RuleInput): string[] {
+  const byCategory: Record<string, string[]> = {
+    APC: ["api-contracts", "http-semantics"],
+    VAL: ["input-validation", "schema-design"],
+    AUT: ["authentication", "authorization"],
+    RLM: ["rate-limiting", "abuse-prevention"],
+    IDP: ["idempotency", "consistency"],
+    TMO: ["timeouts-retries", "resilience"],
+    LOG: ["observability", "audit-logging"],
+    PAG: ["pagination", "query-safety"],
+    SECAPI: ["api-security", "transport-security"],
+    STRUCTURAL: ["architecture", "security-baseline"],
+    STRUCTURAL_EXPECTED: ["infrastructure-readiness", "architecture"],
+    SCAN_SCOPE: ["scanner-scope", "static-analysis"],
+    QUALITY_GATE: ["quality-gates", "audit-integrity"],
+  };
+  return byCategory[input.category] ?? ["secure-coding"];
+}
+
+function inferEducation(input: RuleInput): RuleEducation {
+  const defaults = {
+    why_it_matters:
+      "This control prevents silent regressions that degrade reliability and security over time.",
+    rule_of_thumb:
+      "Treat the pass criteria as the default contract and block changes that violate it.",
+    common_pitfalls: [
+      "Implementing the check in one endpoint but not shared handlers.",
+      "Relying on conventions without automated verification.",
+      "Fixing symptoms while leaving the root contract undefined.",
+    ],
+  } satisfies RuleEducation;
+
+  const templates: Record<string, RuleEducation> = {
+    APC: {
+      why_it_matters:
+        "Predictable API contracts reduce integration bugs and make failures diagnosable. Inconsistent envelopes and status codes cause client-side retry, parsing, and caching errors.",
+      rule_of_thumb:
+        "Use one documented response contract and map each outcome to the correct HTTP status every time.",
+      common_pitfalls: [
+        "Returning 200 for error states because exceptions are swallowed.",
+        "Letting each handler define a bespoke error payload.",
+        "Forgetting to include `Allow`/negotiation behavior for unsupported methods.",
+        "Mixing framework defaults with custom contracts without normalization.",
+      ],
+    },
+    VAL: {
+      why_it_matters:
+        "Input validation blocks malformed and malicious data before it reaches persistence or side effects. Early validation failures are cheaper to detect and safer to recover from.",
+      rule_of_thumb:
+        "Validate and coerce every external input at the boundary before business logic runs.",
+      common_pitfalls: [
+        "Validating only body payloads while leaving query/path params unchecked.",
+        "Accepting unknown fields that trigger mass-assignment issues.",
+        "Returning generic validation messages with no field context.",
+        "Using runtime type assertions without hard schema enforcement.",
+      ],
+    },
+    AUT: {
+      why_it_matters:
+        "Authentication and authorization controls prevent unauthorized data access and privilege abuse. Missing one check can expose every downstream resource under that route.",
+      rule_of_thumb:
+        "Authenticate first, authorize every resource access, and never trust client-provided identity claims.",
+      common_pitfalls: [
+        "Checking authentication at route entry but skipping ownership checks.",
+        "Using token decode-only flows instead of cryptographic verification.",
+        "Returning sensitive fields from ORM defaults.",
+        "Applying role checks inconsistently across nested/list endpoints.",
+      ],
+    },
+    RLM: {
+      why_it_matters:
+        "Rate limiting reduces brute-force and abuse risk while preserving service availability. Weak limiter strategy turns auth endpoints into low-cost attack surfaces.",
+      rule_of_thumb:
+        "Protect sensitive endpoints with persistent, identity-aware limits and deterministic 429 behavior.",
+      common_pitfalls: [
+        "Using process memory stores that reset on deploy or scale-out.",
+        "Applying one global limit without auth-route hardening.",
+        "Omitting retry metadata so clients cannot back off correctly.",
+        "Choosing limiter keys that attackers can easily rotate around.",
+      ],
+    },
+    IDP: {
+      why_it_matters:
+        "Idempotency prevents duplicate state changes caused by retries, network flakiness, and race conditions. Financial and booking flows are especially sensitive to duplicate execution.",
+      rule_of_thumb:
+        "For mutation endpoints, treat repeated requests with the same key as one logical operation.",
+      common_pitfalls: [
+        "Reading idempotency keys without persisting replay results.",
+        "Scoping uniqueness too broadly or too narrowly.",
+        "Skipping TTL and creating unbounded key stores.",
+        "Reprocessing duplicate keys instead of replaying the original response.",
+      ],
+    },
+    TMO: {
+      why_it_matters:
+        "Timeout and retry policy controls tail latency and prevents cascading failures across dependencies. Without bounds, one slow upstream can exhaust worker capacity.",
+      rule_of_thumb:
+        "Set explicit timeouts, cap retries, and use jittered backoff only for idempotent-safe operations.",
+      common_pitfalls: [
+        "Calling external services without timeout signals.",
+        "Retrying non-idempotent writes without safeguards.",
+        "Using fixed retry delays that create retry storms.",
+        "Leaving DB statement timeout behavior undefined.",
+      ],
+    },
+    LOG: {
+      why_it_matters:
+        "Structured logs with correlation identifiers are essential for incident response and forensic traceability. Missing context slows detection and increases mean time to recovery.",
+      rule_of_thumb:
+        "Log every failure path with request context while redacting secrets and PII.",
+      common_pitfalls: [
+        "Swallowing errors inside catch blocks.",
+        "Using console logs without structured fields.",
+        "Skipping request IDs across async boundaries.",
+        "Logging sensitive credentials in cleartext.",
+      ],
+    },
+    PAG: {
+      why_it_matters:
+        "Pagination guardrails prevent unbounded reads that can degrade database performance and expose excess data. Predictable pagination metadata improves client behavior and user experience.",
+      rule_of_thumb:
+        "Enforce bounded, validated pagination inputs and return deterministic page metadata.",
+      common_pitfalls: [
+        "Allowing arbitrary user-provided limits.",
+        "Returning raw cursors that expose internal identifiers.",
+        "Omitting total/hasNext metadata needed for client loops.",
+        "Building sort/filter clauses directly from user input.",
+      ],
+    },
+    SECAPI: {
+      why_it_matters:
+        "API security headers and transport controls reduce exploitability in browser and server-to-server interactions. Misconfigured CORS and SSRF paths are frequent high-impact findings.",
+      rule_of_thumb:
+        "Default to deny: allowlist trusted origins/hosts and explicitly harden sensitive response behavior.",
+      common_pitfalls: [
+        "Combining wildcard CORS origins with credentials.",
+        "Allowing server-side URL fetches to private networks.",
+        "Omitting no-store on token or sensitive responses.",
+        "Passing bearer secrets in query strings.",
+      ],
+    },
+  };
+
+  return templates[input.category] ?? defaults;
+}
+
+function inferRemediation(input: RuleInput): RuleRemediation {
+  const steps = [
+    `Identify in-scope files (${input.scope}) and mark all current violations of ${input.id}.`,
+    `Implement a shared pattern that satisfies the pass criteria: ${input.pass}`,
+    "Add regression tests (positive + negative) for representative endpoints and shared helpers.",
+    "Run static checks and endpoint tests to verify behavior is consistently enforced.",
+  ];
+
+  const acceptance = [
+    `Pass criteria met: ${input.pass}`,
+    `Fail condition removed: ${input.fail}`,
+    "Automated tests cover both compliant and non-compliant cases.",
+  ];
+
+  if (input.id === "APC-01") {
+    return {
+      recommended_envelope: {
+        success: true,
+        data: {},
+        error: null,
+        meta: { requestId: "string", timestamp: "ISO-8601" },
+      },
+      implementation_steps: steps,
+      acceptance_criteria: acceptance,
+    };
+  }
+
+  return {
+    recommended_pattern: `Enforce ${input.title.toLowerCase()} as a shared, test-covered default contract.`,
+    implementation_steps: steps,
+    acceptance_criteria: acceptance,
+  };
+}
+
+function ruleVersion(input: RuleInput): string {
+  return input.specVersion ?? "server-api-audit-v2.0";
+}
+
+function lessonEnabled(input: RuleInput): boolean {
+  const kind = input.ruleKind ?? "check";
+  if (["scan_scope", "quality_gate", "constraint", "expected_infrastructure"].includes(kind)) {
+    return false;
+  }
+  return true;
+}
+
 function toRule(input: RuleInput): RuleRow {
+  const version = ruleVersion(input);
+  const targets = inferTargets(input);
+  const signals = inferSignals(input);
+  const skillTags = inferSkillTags(input);
+  const education = inferEducation(input);
+  const remediation = inferRemediation(input);
+
   return {
     id: input.id,
     title: input.title,
     category: input.category,
-    priority: defaultPriority(input.category, input.critical),
+    priority: input.priority ?? defaultPriority(input.category, input.critical),
     description: input.howToDetect,
+    targets,
+    signals,
+    skill_tags: skillTags,
+    version,
+    lesson_enabled: lessonEnabled(input),
     contents: {
-      spec: "server-api-audit-v1.0",
+      spec: version,
+      version,
       scoring_included: false,
       critical: Boolean(input.critical),
       source_section: input.sourceSection ?? null,
@@ -77,6 +413,14 @@ function toRule(input: RuleInput): RuleRow {
       how_to_detect: input.howToDetect,
       pass_criteria: input.pass,
       fail_criteria: input.fail,
+      standard_refs: input.standardRefs ?? [],
+      supersedes: input.supersedes ?? [],
+      overlaps_with: input.overlapsWith ?? [],
+      targets,
+      signals,
+      skill_tags: skillTags,
+      education,
+      remediation,
     },
     enabled: true,
   };
@@ -767,24 +1111,579 @@ const QUALITY_GATES: RuleInput[] = [
   },
 ];
 
+const STANDARD_REFERENCES = {
+  owaspApiTop10: {
+    name: "OWASP API Security Top 10 (2023)",
+    control: "API Top 10",
+    url: "https://owasp.org/API-Security/",
+  },
+  owaspAsvs: {
+    name: "OWASP ASVS v5.0.0",
+    control: "ASVS",
+    url: "https://owasp.org/www-project-application-security-verification-standard/",
+  },
+  owaspRestCs: {
+    name: "OWASP REST Security Cheat Sheet",
+    control: "REST Security",
+    url: "https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html",
+  },
+  owaspSsrfCs: {
+    name: "OWASP SSRF Prevention Cheat Sheet",
+    control: "SSRF",
+    url: "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html",
+  },
+  owaspUploadCs: {
+    name: "OWASP File Upload Cheat Sheet",
+    control: "File Upload",
+    url: "https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html",
+  },
+  rfc9110: {
+    name: "IETF RFC 9110",
+    control: "HTTP Semantics",
+    url: "https://www.rfc-editor.org/rfc/rfc9110",
+  },
+  rfc9457: {
+    name: "IETF RFC 9457",
+    control: "Problem Details",
+    url: "https://www.rfc-editor.org/rfc/rfc9457",
+  },
+  rfc6750: {
+    name: "IETF RFC 6750",
+    control: "Bearer Token Usage",
+    url: "https://www.rfc-editor.org/rfc/rfc6750",
+  },
+} as const;
+
+const NEW_STANDARDS_RULES_BASE: RuleInput[] = [
+  {
+    id: "APC-05",
+    title: "Enforce Content-Type on mutation endpoints",
+    category: "APC",
+    sourceSection: "C.1+",
+    standardRefs: [STANDARD_REFERENCES.owaspRestCs, STANDARD_REFERENCES.rfc9110],
+    scope: "POST/PUT/PATCH handlers",
+    howToDetect: "Mutation endpoints validate Content-Type and reject unsupported media types with 415.",
+    pass: "Unsupported media types produce 415 with deterministic error contract.",
+    fail: "Mutation handlers accept invalid content types without 415 behavior.",
+  },
+  {
+    id: "APC-06",
+    title: "Enforce Accept negotiation behavior",
+    category: "APC",
+    sourceSection: "C.1+",
+    standardRefs: [STANDARD_REFERENCES.rfc9110, STANDARD_REFERENCES.owaspRestCs],
+    scope: "response negotiation path",
+    howToDetect: "Handlers or framework middleware enforce Accept negotiation and return 406 when required representation is unavailable.",
+    pass: "Unsupported Accept requests are handled via 406 where negotiation is required.",
+    fail: "Accept negotiation is ignored for endpoints requiring explicit representation handling.",
+  },
+  {
+    id: "APC-07",
+    title: "405 behavior with Allow header",
+    category: "APC",
+    sourceSection: "C.1+",
+    standardRefs: [STANDARD_REFERENCES.rfc9110],
+    scope: "method dispatch path",
+    howToDetect: "Unsupported methods return 405 and include Allow header listing supported verbs.",
+    pass: "405 responses include an Allow header and correct method handling.",
+    fail: "Unsupported methods do not return 405 or omit Allow header.",
+  },
+  {
+    id: "APC-08",
+    title: "Use Problem Details error schema",
+    category: "APC",
+    sourceSection: "C.1+",
+    standardRefs: [STANDARD_REFERENCES.rfc9457, STANDARD_REFERENCES.owaspRestCs],
+    scope: "error response builders",
+    howToDetect: "Error responses follow RFC 9457 style structure (type/title/status/detail/instance).",
+    pass: "Error responses are standardized to Problem Details shape.",
+    fail: "Error responses are inconsistent and do not follow a standard schema.",
+  },
+  {
+    id: "APC-09",
+    title: "OpenAPI specification versioned in repo",
+    category: "APC",
+    sourceSection: "C.1+",
+    standardRefs: [STANDARD_REFERENCES.owaspAsvs],
+    scope: "repo docs/spec files",
+    howToDetect: "OpenAPI spec file exists (yaml/json) and is version-controlled.",
+    pass: "API contract is published and versioned in source control.",
+    fail: "No versioned OpenAPI contract found.",
+  },
+  {
+    id: "VAL-05",
+    title: "Reject unknown input fields",
+    category: "VAL",
+    priority: "P1",
+    sourceSection: "C.2+",
+    standardRefs: [STANDARD_REFERENCES.owaspAsvs, STANDARD_REFERENCES.owaspRestCs],
+    scope: "request schema validation layer",
+    howToDetect: "Validation schemas run in strict/whitelist mode and reject unexpected fields.",
+    pass: "Unknown request fields are rejected consistently.",
+    fail: "Unexpected input fields are silently accepted.",
+  },
+  {
+    id: "VAL-06",
+    title: "Request body size limits enforced",
+    category: "VAL",
+    priority: "P1",
+    sourceSection: "C.2+",
+    standardRefs: [STANDARD_REFERENCES.owaspApiTop10, STANDARD_REFERENCES.rfc9110],
+    scope: "body parser/middleware config",
+    howToDetect: "Global or route-specific request size limits are configured and mapped to 413 behavior.",
+    pass: "Request body size is bounded and oversized payloads are rejected.",
+    fail: "No request size limits are configured.",
+  },
+  {
+    id: "VAL-07",
+    title: "Mass-assignment protection",
+    category: "VAL",
+    priority: "P1",
+    sourceSection: "C.2+",
+    standardRefs: [STANDARD_REFERENCES.owaspApiTop10, STANDARD_REFERENCES.owaspAsvs],
+    scope: "DTO/model mapping layer",
+    howToDetect: "User input is mapped through field allowlists before persistence.",
+    pass: "Only explicitly allowed fields can be persisted.",
+    fail: "Raw request bodies flow into model writes without allowlist mapping.",
+  },
+  {
+    id: "VAL-08",
+    title: "Validate file and URL user inputs",
+    category: "VAL",
+    priority: "P1",
+    sourceSection: "C.2+",
+    standardRefs: [STANDARD_REFERENCES.owaspUploadCs, STANDARD_REFERENCES.owaspSsrfCs],
+    scope: "upload and URL ingestion handlers",
+    howToDetect: "File metadata and user-provided URLs are validated before downstream processing.",
+    pass: "File/URL inputs are validated with explicit constraints.",
+    fail: "File/URL inputs are processed without validation guardrails.",
+  },
+  {
+    id: "AUT-05",
+    title: "JWT algorithm allowlist and alg=none rejection",
+    category: "AUT",
+    critical: true,
+    priority: "P0",
+    sourceSection: "C.3+",
+    standardRefs: [STANDARD_REFERENCES.owaspAsvs, STANDARD_REFERENCES.owaspRestCs],
+    supersedes: ["AUT-03"],
+    scope: "token verification code paths",
+    howToDetect: "JWT verification enforces explicit algorithm allowlist and rejects alg=none.",
+    pass: "JWT algorithms are explicitly constrained and none-algorithm is rejected.",
+    fail: "JWT verification accepts implicit/unsafe algorithms.",
+  },
+  {
+    id: "AUT-06",
+    title: "JWT claims validation",
+    category: "AUT",
+    critical: true,
+    priority: "P0",
+    sourceSection: "C.3+",
+    standardRefs: [STANDARD_REFERENCES.owaspAsvs, STANDARD_REFERENCES.rfc6750],
+    supersedes: ["AUT-03"],
+    scope: "JWT/session validation layer",
+    howToDetect: "Token validation checks exp/nbf/iss/aud claims before accepting identity.",
+    pass: "Critical token claims are validated for every authenticated request.",
+    fail: "Token claims are partially checked or ignored.",
+  },
+  {
+    id: "AUT-07",
+    title: "Strong password hashing algorithms only",
+    category: "AUT",
+    priority: "P1",
+    sourceSection: "C.3+",
+    standardRefs: [STANDARD_REFERENCES.owaspAsvs],
+    scope: "auth credential storage/update flows",
+    howToDetect: "Password hashes use argon2/bcrypt/scrypt and avoid weak/fast hashing algorithms.",
+    pass: "Credential hashing uses strong password-hash primitives.",
+    fail: "Weak or inappropriate hash algorithms are used for passwords.",
+  },
+  {
+    id: "AUT-08",
+    title: "Session cookie security attributes",
+    category: "AUT",
+    priority: "P1",
+    sourceSection: "C.3+",
+    standardRefs: [STANDARD_REFERENCES.owaspRestCs],
+    scope: "Set-Cookie headers/session config",
+    howToDetect: "Session cookies are set with Secure, HttpOnly, and SameSite attributes.",
+    pass: "Session cookies include mandatory security attributes.",
+    fail: "Session cookies are missing one or more required attributes.",
+  },
+  {
+    id: "AUT-09",
+    title: "Role checks on admin and sensitive routes",
+    category: "AUT",
+    priority: "P1",
+    sourceSection: "C.3+",
+    standardRefs: [STANDARD_REFERENCES.owaspApiTop10, STANDARD_REFERENCES.owaspAsvs],
+    scope: "admin/sensitive endpoint handlers",
+    howToDetect: "Role/permission checks are required before privileged actions.",
+    pass: "Sensitive routes enforce explicit authorization policy checks.",
+    fail: "Privileged actions are reachable without explicit role/permission checks.",
+  },
+  {
+    id: "AUT-10",
+    title: "Object-level authorization in nested/list access",
+    category: "AUT",
+    critical: true,
+    priority: "P0",
+    sourceSection: "C.3+",
+    standardRefs: [STANDARD_REFERENCES.owaspApiTop10],
+    scope: "nested resource and list query handlers",
+    howToDetect: "Collection/nested queries are constrained by principal scope to prevent cross-tenant or cross-user exposure.",
+    pass: "Object-level auth scope is enforced for list and nested resource access.",
+    fail: "List/nested access can return resources outside caller ownership scope.",
+  },
+  {
+    id: "RLM-05",
+    title: "Robust auth route limiter key strategy",
+    category: "RLM",
+    priority: "P1",
+    sourceSection: "C.4+",
+    standardRefs: [STANDARD_REFERENCES.owaspApiTop10, STANDARD_REFERENCES.owaspRestCs],
+    scope: "auth/login limiter configuration",
+    howToDetect: "Limiter keys include IP plus account/user dimension for login-sensitive routes.",
+    pass: "Auth rate limiter uses robust composite identity strategy.",
+    fail: "Auth limiter keys rely on a single weak dimension.",
+  },
+  {
+    id: "RLM-06",
+    title: "Tiered limits by endpoint sensitivity",
+    category: "RLM",
+    priority: "P1",
+    sourceSection: "C.4+",
+    standardRefs: [STANDARD_REFERENCES.owaspApiTop10],
+    scope: "rate limit policy definitions",
+    howToDetect: "Different endpoint classes have distinct limits instead of one uniform policy.",
+    pass: "Rate limits are tuned by endpoint sensitivity/risk.",
+    fail: "Single global rate policy is used for all endpoint types.",
+  },
+  {
+    id: "RLM-07",
+    title: "429 response contract with retry metadata",
+    category: "RLM",
+    priority: "P1",
+    sourceSection: "C.4+",
+    standardRefs: [STANDARD_REFERENCES.rfc9110, STANDARD_REFERENCES.owaspRestCs],
+    supersedes: ["RLM-04"],
+    scope: "rate limited responses",
+    howToDetect: "429 responses include consistent contract and retry hints (headers/body metadata).",
+    pass: "429 responses provide deterministic retry metadata.",
+    fail: "429 responses are inconsistent or omit retry guidance.",
+  },
+  {
+    id: "RLM-08",
+    title: "Brute-force mitigation signals",
+    category: "RLM",
+    priority: "P1",
+    sourceSection: "C.4+",
+    standardRefs: [STANDARD_REFERENCES.owaspApiTop10],
+    scope: "auth and credential endpoints",
+    howToDetect: "Lockout/backoff controls exist for repeated authentication failures.",
+    pass: "Brute-force protection includes lockout or progressive delay behavior.",
+    fail: "Repeated auth failures are not mitigated.",
+  },
+  {
+    id: "IDP-04",
+    title: "Idempotency key uniqueness scope",
+    category: "IDP",
+    sourceSection: "C.5+",
+    standardRefs: [STANDARD_REFERENCES.owaspRestCs],
+    scope: "idempotency key storage model",
+    howToDetect: "Idempotency uniqueness is scoped by actor + route + method, not key string alone.",
+    pass: "Idempotency uniqueness uses safe scope dimensions.",
+    fail: "Idempotency key collisions are possible across actors/routes/methods.",
+  },
+  {
+    id: "IDP-05",
+    title: "Request fingerprint conflict handling",
+    category: "IDP",
+    sourceSection: "C.5+",
+    standardRefs: [STANDARD_REFERENCES.owaspRestCs, STANDARD_REFERENCES.rfc9110],
+    scope: "idempotency duplicate handling path",
+    howToDetect: "Same idempotency key with mismatched request fingerprint returns conflict (409).",
+    pass: "Mismatched replay attempts are rejected with explicit conflict behavior.",
+    fail: "Mismatched payloads with same key are accepted or processed ambiguously.",
+  },
+  {
+    id: "IDP-06",
+    title: "Replay original response for duplicate key",
+    category: "IDP",
+    sourceSection: "C.5+",
+    standardRefs: [STANDARD_REFERENCES.owaspRestCs],
+    scope: "idempotency replay cache",
+    howToDetect: "Duplicate idempotency key returns original status/body instead of reprocessing.",
+    pass: "Duplicate idempotency requests are replayed deterministically.",
+    fail: "Duplicate keys trigger reprocessing or inconsistent responses.",
+  },
+  {
+    id: "TMO-05",
+    title: "Explicit bounded outbound timeout constants",
+    category: "TMO",
+    priority: "P1",
+    sourceSection: "C.6+",
+    standardRefs: [STANDARD_REFERENCES.owaspRestCs],
+    scope: "HTTP client wrappers/config",
+    howToDetect: "Timeouts are explicit constants and bounded to sane values.",
+    pass: "Outbound calls use explicit bounded timeout configuration.",
+    fail: "Timeouts are implicit/unbounded or absent.",
+  },
+  {
+    id: "TMO-06",
+    title: "Retry attempt bounds enforced",
+    category: "TMO",
+    priority: "P1",
+    sourceSection: "C.6+",
+    standardRefs: [STANDARD_REFERENCES.owaspRestCs],
+    scope: "retry policy configuration",
+    howToDetect: "Retry mechanisms enforce maxAttempts bounds.",
+    pass: "Retry behavior is explicitly bounded.",
+    fail: "Retry loops are unbounded or unclear.",
+  },
+  {
+    id: "TMO-07",
+    title: "Retry jitter strategy present",
+    category: "TMO",
+    priority: "P1",
+    sourceSection: "C.6+",
+    standardRefs: [STANDARD_REFERENCES.owaspRestCs],
+    supersedes: ["TMO-04"],
+    scope: "retry delay policy",
+    howToDetect: "Retry backoff includes jitter to avoid synchronized retry bursts.",
+    pass: "Retry policy uses jittered backoff.",
+    fail: "Retry policy uses deterministic delay without jitter.",
+  },
+  {
+    id: "LOG-05",
+    title: "Sensitive value redaction in logs",
+    category: "LOG",
+    priority: "P1",
+    sourceSection: "C.7+",
+    standardRefs: [STANDARD_REFERENCES.owaspAsvs, STANDARD_REFERENCES.owaspRestCs],
+    scope: "logger middleware/serializers",
+    howToDetect: "Log pipeline redacts tokens, passwords, secrets, and API keys.",
+    pass: "Sensitive values are consistently redacted in logs.",
+    fail: "Sensitive values can be emitted in logs.",
+  },
+  {
+    id: "LOG-06",
+    title: "Security event audit logging",
+    category: "LOG",
+    priority: "P1",
+    sourceSection: "C.7+",
+    standardRefs: [STANDARD_REFERENCES.owaspAsvs],
+    scope: "auth and privilege event handlers",
+    howToDetect: "Security events (auth failures, privilege changes, lockouts) are logged with context.",
+    pass: "Security-relevant events are auditable in structured logs.",
+    fail: "Security events are not logged or lack audit context.",
+  },
+  {
+    id: "LOG-07",
+    title: "Access logs include latency and request context",
+    category: "LOG",
+    priority: "P2",
+    sourceSection: "C.7+",
+    standardRefs: [STANDARD_REFERENCES.owaspRestCs],
+    scope: "access logging middleware",
+    howToDetect: "Access logs include route/method/status/latency/requestId.",
+    pass: "Access logs contain complete request lifecycle metadata.",
+    fail: "Access logs miss key request lifecycle fields.",
+  },
+  {
+    id: "LOG-08",
+    title: "Health/readiness endpoints with protected diagnostics",
+    category: "LOG",
+    priority: "P2",
+    sourceSection: "C.7+",
+    standardRefs: [STANDARD_REFERENCES.owaspAsvs],
+    scope: "ops endpoints",
+    howToDetect: "Health/readiness endpoints exist, and verbose diagnostics are protected.",
+    pass: "Operational health endpoints are present and sensitive diagnostics are restricted.",
+    fail: "Health endpoints are missing or expose sensitive diagnostics publicly.",
+  },
+  {
+    id: "PAG-05",
+    title: "Default pagination limit enforced",
+    category: "PAG",
+    priority: "P2",
+    sourceSection: "C.8+",
+    standardRefs: [STANDARD_REFERENCES.owaspApiTop10],
+    scope: "list endpoint pagination logic",
+    howToDetect: "List endpoints apply a server default limit when client omits pagination parameters.",
+    pass: "Default pagination limit is consistently applied.",
+    fail: "Requests without pagination can return unbounded results.",
+  },
+  {
+    id: "PAG-06",
+    title: "Sort/filter allowlist validation",
+    category: "PAG",
+    priority: "P2",
+    sourceSection: "C.8+",
+    standardRefs: [STANDARD_REFERENCES.owaspApiTop10, STANDARD_REFERENCES.owaspRestCs],
+    scope: "query parsing and query builder layer",
+    howToDetect: "Sort/filter fields are validated against explicit allowlists before query composition.",
+    pass: "Sort/filter options are constrained to allowed fields.",
+    fail: "User-controlled sort/filter fields are used without allowlist validation.",
+  },
+  {
+    id: "PAG-07",
+    title: "Cursor tamper resistance",
+    category: "PAG",
+    priority: "P2",
+    sourceSection: "C.8+",
+    standardRefs: [STANDARD_REFERENCES.owaspRestCs],
+    scope: "cursor pagination encoder/decoder",
+    howToDetect: "Cursor values are opaque and signed/encrypted to prevent client tampering.",
+    pass: "Cursor design prevents straightforward tampering/forgery.",
+    fail: "Cursor values are raw/forgeable identifiers.",
+  },
+  {
+    id: "PAG-08",
+    title: "Large export guardrails",
+    category: "PAG",
+    priority: "P2",
+    sourceSection: "C.8+",
+    standardRefs: [STANDARD_REFERENCES.owaspApiTop10],
+    scope: "bulk export/list endpoints",
+    howToDetect: "Large exports are handled by async jobs or streaming with explicit guardrails.",
+    pass: "Bulk data extraction paths are bounded and operationally safe.",
+    fail: "Large exports are synchronous and unbounded.",
+  },
+  {
+    id: "SECAPI-01",
+    title: "CORS origin allowlist enforced",
+    category: "SECAPI",
+    priority: "P1",
+    sourceSection: "I",
+    standardRefs: [STANDARD_REFERENCES.owaspApiTop10, STANDARD_REFERENCES.owaspRestCs],
+    scope: "CORS middleware/config",
+    howToDetect: "CORS policy uses explicit allowed origins for credentialed APIs.",
+    pass: "CORS origins are allowlisted and intentional.",
+    fail: "CORS is overly permissive for protected endpoints.",
+  },
+  {
+    id: "SECAPI-02",
+    title: "Block wildcard origin with credentials",
+    category: "SECAPI",
+    priority: "P1",
+    sourceSection: "I",
+    standardRefs: [STANDARD_REFERENCES.owaspRestCs],
+    scope: "CORS configuration",
+    howToDetect: "Policy blocks Access-Control-Allow-Origin=* when credentials are enabled.",
+    pass: "Wildcard origin is not combined with credentialed requests.",
+    fail: "CORS allows wildcard origin with credentials.",
+  },
+  {
+    id: "SECAPI-03",
+    title: "No-store cache controls on sensitive responses",
+    category: "SECAPI",
+    priority: "P1",
+    sourceSection: "I",
+    standardRefs: [STANDARD_REFERENCES.owaspRestCs, STANDARD_REFERENCES.rfc9110],
+    scope: "auth/token/sensitive response handlers",
+    howToDetect: "Sensitive responses set Cache-Control no-store semantics.",
+    pass: "Sensitive responses explicitly prevent caching.",
+    fail: "Sensitive responses omit strict cache control.",
+  },
+  {
+    id: "SECAPI-04",
+    title: "SSRF private-network egress blocking",
+    category: "SECAPI",
+    critical: true,
+    priority: "P0",
+    sourceSection: "I",
+    standardRefs: [STANDARD_REFERENCES.owaspApiTop10, STANDARD_REFERENCES.owaspSsrfCs],
+    scope: "server-side URL fetch paths",
+    howToDetect: "Outbound URL fetch code blocks localhost, link-local, and private address ranges.",
+    pass: "SSRF guardrails block private/internal network destinations.",
+    fail: "Server-side fetch can target internal/private network ranges.",
+  },
+  {
+    id: "SECAPI-05",
+    title: "Outbound host/domain allowlist for URL fetch",
+    category: "SECAPI",
+    priority: "P1",
+    sourceSection: "I",
+    standardRefs: [STANDARD_REFERENCES.owaspSsrfCs],
+    scope: "fetch-by-url integrations",
+    howToDetect: "Outbound URL fetch is constrained by explicit host/domain allowlist policy.",
+    pass: "Only approved hosts/domains can be fetched server-side.",
+    fail: "No outbound domain allowlist exists for URL fetch features.",
+  },
+  {
+    id: "SECAPI-06",
+    title: "No bearer/API secrets in URL query",
+    category: "SECAPI",
+    priority: "P1",
+    sourceSection: "I",
+    standardRefs: [STANDARD_REFERENCES.rfc6750, STANDARD_REFERENCES.owaspRestCs],
+    scope: "auth/token handling and URL construction",
+    howToDetect: "Bearer/API credentials are not transported in URL query parameters.",
+    pass: "Credentials are carried via headers or secure body fields, not URLs.",
+    fail: "Bearer/API secrets appear in URL query strings.",
+  },
+  {
+    id: "SECAPI-07",
+    title: "File upload extension/MIME/size hardening",
+    category: "SECAPI",
+    priority: "P1",
+    sourceSection: "I",
+    standardRefs: [STANDARD_REFERENCES.owaspUploadCs],
+    scope: "file upload handlers",
+    howToDetect: "Uploads enforce extension allowlist, MIME checks, and size bounds before storage.",
+    pass: "Upload pipeline validates extension, MIME, and size before persistence.",
+    fail: "Uploads are accepted without adequate validation hardening.",
+  },
+];
+
+const NEW_STANDARDS_RULES: RuleInput[] = NEW_STANDARDS_RULES_BASE.map((item) => ({
+  ...item,
+  specVersion: "server-api-standards-v1.1",
+}));
+
+const SUPERSEDED_RULE_IDS = [
+  "B-RULE-01",
+  "B-RULE-02",
+  "AUT-03",
+  "RLM-04",
+  "TMO-04",
+] as const;
+
 const ALL_RULES: RuleRow[] = [
   ...CHECKS,
   ...STRUCTURAL_GAPS,
   ...EXPECTED_INFRASTRUCTURE,
   ...SCAN_SCOPE_RULES,
   ...QUALITY_GATES,
-].map(toRule);
+  ...NEW_STANDARDS_RULES,
+]
+  .filter((item) => !SUPERSEDED_RULE_IDS.includes(item.id as (typeof SUPERSEDED_RULE_IDS)[number]))
+  .map(toRule);
 
 async function main(): Promise<void> {
   loadDotEnvLocal();
 
   const db = getDbClient();
 
+  const { error: deleteError } = await db
+    .from("rules")
+    .delete()
+    .in("id", [...SUPERSEDED_RULE_IDS]);
+  if (deleteError) {
+    throw new Error(deleteError.message);
+  }
+
   const { error } = await db.from("rules").upsert(ALL_RULES, { onConflict: "id" });
   if (error) {
     if (/relation .* does not exist|Could not find the table/i.test(error.message)) {
       throw new Error(
         "Table `rules` is missing. Apply migration qa-web/supabase/migrations/20260228_rules_table.sql first.",
+      );
+    }
+    if (/column .* does not exist/i.test(error.message)) {
+      throw new Error(
+        "Rules columns are outdated. Apply migration qa-web/supabase/migrations/20260301_rules_learning_fields.sql first.",
       );
     }
     throw new Error(error.message);

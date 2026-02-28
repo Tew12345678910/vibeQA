@@ -1,23 +1,45 @@
 import { NextResponse } from "next/server";
 
-import {
-  upsertProject,
-  listProjects,
-} from "@/lib/db/repository";
+import { upsertProject, listProjectsWithStats } from "@/lib/db/repository";
+import { getUserFromToken } from "@/lib/auth";
 
-export async function GET() {
+function getBearerToken(request: Request): string | null {
+  const header = request.headers.get("authorization") ?? "";
+  return header.startsWith("Bearer ") ? header.slice(7).trim() : null;
+}
+
+export async function GET(request: Request) {
+  const token = getBearerToken(request);
+  if (!token) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const user = await getUserFromToken(token);
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
-    const projects = await listProjects();
+    const projects = await listProjectsWithStats(user.id);
     return NextResponse.json({ projects });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to list projects" },
+      {
+        error:
+          error instanceof Error ? error.message : "Failed to list projects",
+      },
       { status: 500 },
     );
   }
 }
 
 export async function POST(request: Request) {
+  const token = getBearerToken(request);
+  if (!token) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const user = await getUserFromToken(token);
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const body = (await request.json()) as {
       id: string;
@@ -38,6 +60,7 @@ export async function POST(request: Request) {
 
     await upsertProject({
       id: body.id,
+      userId: user.id,
       name: body.name,
       sourceType: body.sourceType ?? "local",
       githubRepo: body.githubRepo,
@@ -49,8 +72,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true }, { status: 201 });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to save project" },
-      { status: 500 },
+      {
+        error:
+          error instanceof Error ? error.message : "Failed to save project",
+      },
+      { status: 400 },
     );
   }
 }

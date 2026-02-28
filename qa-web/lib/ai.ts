@@ -16,13 +16,23 @@ type AiInput = {
     p1: number;
     p2: number;
   };
-  endpoints: Array<{ method: string; path: string; file: string; notes: string }>;
+  endpoints: Array<{
+    method: string;
+    path: string;
+    file: string;
+    notes: string;
+  }>;
   checks: Array<{
     standard: string;
     status: string;
     severity: string;
     message: string;
-    evidence: Array<{ file: string; lineStart: number; lineEnd: number; snippet: string }>;
+    evidence: Array<{
+      file: string;
+      lineStart: number;
+      lineEnd: number;
+      snippet: string;
+    }>;
     recommendations: string[];
   }>;
   detectedStack: {
@@ -93,23 +103,39 @@ function fallbackMarkdown(input: AiInput): string {
   lines.push("");
   lines.push("## Top Issues");
   if (!topIssues.length) {
-    lines.push("No high-priority standards gaps were detected from static signals.");
+    lines.push(
+      "No high-priority standards gaps were detected from static signals.",
+    );
   } else {
     for (const [index, issue] of topIssues.entries()) {
-      lines.push(`${index + 1}. **[${issue.severity}] ${issue.standard}** - ${issue.message}`);
+      lines.push(
+        `${index + 1}. **[${issue.severity}] ${issue.standard}** - ${issue.message}`,
+      );
     }
   }
   lines.push("");
   lines.push("## Why This Matters");
-  lines.push("- Strong API contracts reduce integration bugs and speed up client development.");
+  lines.push(
+    "- Strong API contracts reduce integration bugs and speed up client development.",
+  );
   lines.push("- Auth/AuthZ and rate limiting lower security and abuse risk.");
-  lines.push("- Timeouts, logging, and pagination improve reliability and operability in production.");
+  lines.push(
+    "- Timeouts, logging, and pagination improve reliability and operability in production.",
+  );
   lines.push("");
   lines.push("## How To Fix");
-  lines.push("- Introduce shared API helpers for consistent success/error envelopes and status codes.");
-  lines.push("- Add schema validation and field-level error mapping on all mutable endpoints.");
-  lines.push("- Enforce auth + authorization checks and apply rate limiting to sensitive routes.");
-  lines.push("- Add timeout/retry wrappers for outbound calls and structured requestId logging.");
+  lines.push(
+    "- Introduce shared API helpers for consistent success/error envelopes and status codes.",
+  );
+  lines.push(
+    "- Add schema validation and field-level error mapping on all mutable endpoints.",
+  );
+  lines.push(
+    "- Enforce auth + authorization checks and apply rate limiting to sensitive routes.",
+  );
+  lines.push(
+    "- Add timeout/retry wrappers for outbound calls and structured requestId logging.",
+  );
   lines.push("- Standardize pagination with explicit limit caps.");
 
   return lines.join("\n");
@@ -137,7 +163,9 @@ function toMarkdown(data: AiResponse): string {
 
   lines.push("## Why This Matters");
   if (!data.whyThisMatters.length) {
-    lines.push("- Standards consistency reduces regressions and accelerates feature delivery.");
+    lines.push(
+      "- Standards consistency reduces regressions and accelerates feature delivery.",
+    );
   } else {
     for (const item of data.whyThisMatters) {
       lines.push(`- ${item}`);
@@ -178,12 +206,15 @@ export async function generateAiReport(input: AiInput): Promise<{
   markdown: string;
   planImprovements: AiPlanImprovement[];
 }> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.AI_API_KEY;
   if (!apiKey) {
     return { markdown: fallbackMarkdown(input), planImprovements: [] };
   }
 
-  const model = process.env.OPENAI_MODEL ?? "gpt-4.1-mini";
+  const baseUrl = (
+    process.env.AI_BASE_URL ?? "https://api.openai.com/v1"
+  ).replace(/\/$/, "");
+  const model = process.env.AI_CHAT_MODEL ?? "gpt-4o-mini";
 
   const payload = {
     project: input.project,
@@ -194,7 +225,7 @@ export async function generateAiReport(input: AiInput): Promise<{
     uiRoutes: input.uiRoutes.slice(0, 20),
   };
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const response = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,

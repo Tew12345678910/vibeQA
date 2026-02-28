@@ -16,10 +16,10 @@ type AppChromeProps = {
 
 export function AppChrome({ children }: AppChromeProps) {
   const pathname = usePathname();
-  const isLandingPage = pathname === "/landing";
 
-  if (isLandingPage) {
-    return <main className="min-h-[100dvh]">{children}</main>;
+  // Landing page and login page render full-screen without the app shell
+  if (pathname === "/" || pathname === "/login") {
+    return <>{children}</>;
   }
 
   return (

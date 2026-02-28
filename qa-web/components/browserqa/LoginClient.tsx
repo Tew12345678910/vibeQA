@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Github } from "lucide-react";
+import { Bot, Github } from "lucide-react";
 
 import { useSession, signInWithGitHub } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
@@ -45,15 +45,15 @@ export function LoginClient() {
     <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center">
-          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-xl bg-blue-500">
-            <span className="text-lg font-bold text-slate-950">QA</span>
+          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-xl bg-emerald-500">
+            <Bot className="h-6 w-6 text-slate-950" />
           </div>
-          <h1 className="text-2xl font-semibold text-white">BrowserQA</h1>
+          <h1 className="text-2xl font-semibold text-white">VibeQA</h1>
           <p className="mt-1 text-sm text-slate-400">Sign in to continue</p>
         </div>
 
         <Button
-          className="w-full gap-2"
+          className="w-full gap-2 bg-emerald-500 text-slate-950 hover:bg-emerald-400"
           onClick={handleGitHubSignIn}
           disabled={busy || isPending}
         >

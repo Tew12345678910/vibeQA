@@ -11,8 +11,9 @@ const geistSans = Geist({
 });
 
 export const metadata: Metadata = {
-  title: "BrowserQA Studio",
-  description: "QA dashboard for suites, runs, issues, and cloud audit monitoring.",
+  title: "VibeQA — The QA Education Layer for AI-Assisted Development",
+  description:
+    "VibeQA runs two AI agents on every scan — one reads your source code, one operates a real browser on your live site — then explains exactly what's wrong and teaches you why it matters.",
 };
 
 export default function RootLayout({
@@ -22,7 +23,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body className={`${geistSans.variable} min-h-screen bg-background text-foreground antialiased`}>
+      <body
+        className={`${geistSans.variable} min-h-screen bg-background text-foreground antialiased`}
+      >
         <TooltipProvider>
           <AppChrome>{children}</AppChrome>
         </TooltipProvider>

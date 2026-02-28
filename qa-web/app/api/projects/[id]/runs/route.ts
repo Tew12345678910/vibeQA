@@ -24,6 +24,12 @@ export async function POST(request: Request, context: Context) {
       id: string;
       createdAt: string;
       counts: { p0: number; p1: number; p2: number; total: number };
+      analysis?: {
+        framework?: string;
+        router?: string;
+        routes?: Array<Record<string, unknown>>;
+      };
+      metaJson?: Record<string, unknown>;
       issues: Array<{
         id: string;
         source: string;
@@ -31,6 +37,11 @@ export async function POST(request: Request, context: Context) {
         priority: string;
         category: string;
         description?: string;
+        cardJson?: Record<string, unknown>;
+        filePath?: string;
+        endpoint?: string;
+        confidence?: string;
+        state?: string;
       }>;
     };
 
@@ -46,6 +57,8 @@ export async function POST(request: Request, context: Context) {
       projectId,
       createdAt: body.createdAt ?? new Date().toISOString(),
       counts: body.counts,
+      analysis: body.analysis,
+      metaJson: body.metaJson,
       issues: body.issues ?? [],
     });
 

@@ -2,6 +2,20 @@
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
+/**
+ * Returns `{ Authorization: "Bearer <access_token>" }` for the current session,
+ * or an empty object if there is no active session.
+ * Use this to authenticate requests to Next.js API routes from client components.
+ */
+export async function getAuthHeaders(): Promise<Record<string, string>> {
+  const supabase = getSupabaseBrowserClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session?.access_token) return {};
+  return { Authorization: `Bearer ${session.access_token}` };
+}
+
 let _browserClient: SupabaseClient | null = null;
 
 /**

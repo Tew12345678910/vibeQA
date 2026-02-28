@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ArrowLeft,
-  ChevronDown,
   ChevronRight,
   Clock,
   ExternalLink,
@@ -18,11 +17,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { DetailLoadingState } from "@/components/browserqa/LoadingStates";
-import {
-  getProjectById,
-  type ProjectConfig,
-} from "@/lib/browserqa/project-store";
+import { getProjectById } from "@/lib/browserqa/project-store";
 import { loadRuns, type RunRecord } from "@/lib/browserqa/run-store";
+import { type RunMetadata } from "@/lib/browserqa/project-analysis";
 
 // ------------------------------------------------------------------
 // Priority helpers
@@ -44,13 +41,11 @@ type Props = { projectId: string };
 
 export function ProjectDetailClient({ projectId }: Props) {
   const router = useRouter();
-  const [project, setProject] = useState<ProjectConfig | null>(null);
+  const project = useMemo(() => getProjectById(projectId), [projectId]);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setProject(getProjectById(projectId));
-
     // Load runs from Supabase; fall back to localStorage
     fetch(`/api/projects/${projectId}/runs`)
       .then(async (res) => {
@@ -63,6 +58,7 @@ export function ProjectDetailClient({ projectId }: Props) {
             count_p1: number;
             count_p2: number;
             count_total: number;
+            meta_json?: Record<string, unknown>;
             created_at: string;
             issues?: Array<{
               issue_id: string;
@@ -85,6 +81,7 @@ export function ProjectDetailClient({ projectId }: Props) {
               p2: r.count_p2,
               total: r.count_total,
             },
+            meta: (r.meta_json as RunMetadata | undefined) ?? undefined,
             issues: (r.issues ?? []).map((i) => ({
               id: i.issue_id,
               source: i.source as "github" | "browser",
@@ -138,7 +135,9 @@ export function ProjectDetailClient({ projectId }: Props) {
         </Button>
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-slate-100">{project.name}</h1>
+            <h1 className="text-2xl font-bold text-slate-100">
+              {project.name}
+            </h1>
             <div className="mt-1 flex flex-wrap items-center gap-3">
               {project.githubRepo ? (
                 <a
@@ -183,7 +182,11 @@ export function ProjectDetailClient({ projectId }: Props) {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatCard
             label="Latest Scan"
-            value={new Date(latest.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+            value={new Date(latest.createdAt).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            })}
             icon={<Clock className="h-4 w-4 text-slate-400" />}
           />
           <StatCard
@@ -194,12 +197,16 @@ export function ProjectDetailClient({ projectId }: Props) {
           <StatCard
             label="Critical (P0)"
             value={String(latest.counts.p0)}
-            className={latest.counts.p0 > 0 ? "border-red-500/30 bg-red-500/5" : ""}
+            className={
+              latest.counts.p0 > 0 ? "border-red-500/30 bg-red-500/5" : ""
+            }
           />
           <StatCard
             label="High (P1)"
             value={String(latest.counts.p1)}
-            className={latest.counts.p1 > 0 ? "border-amber-500/30 bg-amber-500/5" : ""}
+            className={
+              latest.counts.p1 > 0 ? "border-amber-500/30 bg-amber-500/5" : ""
+            }
           />
         </div>
       ) : null}
@@ -213,15 +220,18 @@ export function ProjectDetailClient({ projectId }: Props) {
         {runs.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-slate-700 py-16 text-slate-500">
             <Play className="h-12 w-12 text-slate-700" />
-            <p className="text-base font-semibold text-slate-300">No scans yet</p>
+            <p className="text-base font-semibold text-slate-300">
+              No scans yet
+            </p>
             <p className="text-sm">
-              Click <span className="text-emerald-400">New Scan</span> to analyse this project.
+              Click <span className="text-emerald-400">New Scan</span> to
+              analyse this project.
             </p>
           </div>
         ) : (
           <div className="flex flex-col gap-3">
             {runs.map((run) => (
-              <RunCard key={run.id} run={run} />
+              <RunCard key={run.id} run={run} projectId={projectId} />
             ))}
           </div>
         )}
@@ -258,30 +268,39 @@ function StatCard({
   );
 }
 
-function RunCard({ run }: { run: RunRecord }) {
-  const [expanded, setExpanded] = useState(false);
+function RunCard({ run, projectId }: { run: RunRecord; projectId: string }) {
+  const router = useRouter();
 
   return (
     <Card className="border-slate-800 bg-slate-900/60">
       <CardContent className="p-0">
         <button
           type="button"
-          onClick={() => setExpanded((v) => !v)}
+          onClick={() =>
+            router.push(`/projects/${projectId}/run?runId=${run.id}`)
+          }
           className="flex w-full items-center justify-between rounded-xl px-5 py-4 text-left transition-colors hover:bg-slate-800/40"
         >
           <div className="flex items-center gap-4">
-            {expanded ? (
-              <ChevronDown className="h-4 w-4 shrink-0 text-slate-500" />
-            ) : (
-              <ChevronRight className="h-4 w-4 shrink-0 text-slate-500" />
-            )}
+            <ChevronRight className="h-4 w-4 shrink-0 text-slate-500" />
             <div>
               <p className="text-sm font-medium text-slate-100">
-                {new Date(run.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}
+                {new Date(run.createdAt).toLocaleString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
               </p>
               <p className="text-xs text-slate-500">
                 {run.counts.total} issue{run.counts.total !== 1 ? "s" : ""}
               </p>
+              {run.meta?.scope === "analysis-only" ? (
+                <p className="text-[11px] text-blue-300">
+                  Analyzed pages only ({run.meta.selectedRoutePaths.length})
+                </p>
+              ) : null}
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -299,34 +318,6 @@ function RunCard({ run }: { run: RunRecord }) {
             })}
           </div>
         </button>
-
-        {expanded && run.issues.length > 0 ? (
-          <div className="space-y-2 border-t border-slate-800 px-5 py-3">
-            {run.issues.map((issue) => (
-              <div
-                key={issue.id}
-                className="flex items-start gap-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3"
-              >
-                <span
-                  className={`mt-0.5 shrink-0 rounded-full border px-2 py-0.5 text-xs font-semibold ${priorityColors[issue.priority]}`}
-                >
-                  {issue.priority}
-                </span>
-                <div>
-                  <p className="text-sm text-slate-200">{issue.title}</p>
-                  {issue.description ? (
-                    <p className="mt-0.5 text-xs text-slate-500">
-                      {issue.description}
-                    </p>
-                  ) : null}
-                  <p className="mt-1 text-xs capitalize text-slate-600">
-                    {issue.category} · {issue.source}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : null}
       </CardContent>
     </Card>
   );

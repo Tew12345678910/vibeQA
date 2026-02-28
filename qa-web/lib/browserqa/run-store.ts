@@ -1,6 +1,8 @@
 // Lightweight in-browser run history store.
 // Each "run" is the result of pressing Scan on /projects/[id]/run.
 
+import { normalizeProjectAnalysis, type RunMetadata } from "./project-analysis";
+
 const RUNS_KEY_PREFIX = "bqa_runs_";
 
 export type StoredIssue = {
@@ -10,6 +12,11 @@ export type StoredIssue = {
   priority: "P0" | "P1" | "P2";
   category: string;
   description?: string;
+  cardJson?: Record<string, unknown>;
+  filePath?: string;
+  endpoint?: string;
+  confidence?: "high" | "medium" | "low";
+  state?: string;
 };
 
 export type RunRecord = {
@@ -18,6 +25,7 @@ export type RunRecord = {
   createdAt: string;
   issues: StoredIssue[];
   counts: { p0: number; p1: number; p2: number; total: number };
+  meta?: RunMetadata;
 };
 
 function runsKey(projectId: string) {
@@ -30,7 +38,51 @@ export function loadRuns(projectId: string): RunRecord[] {
     const raw = localStorage.getItem(runsKey(projectId));
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? (parsed as RunRecord[]) : [];
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .filter(
+        (entry): entry is Record<string, unknown> =>
+          typeof entry === "object" && entry !== null,
+      )
+      .map((entry) => {
+        const metaRaw =
+          entry.meta && typeof entry.meta === "object"
+            ? (entry.meta as Record<string, unknown>)
+            : null;
+
+        const selectedRoutePaths = Array.isArray(metaRaw?.selectedRoutePaths)
+          ? metaRaw.selectedRoutePaths
+              .map((value) => String(value).trim())
+              .filter(Boolean)
+          : [];
+
+        return {
+          id: String(entry.id ?? ""),
+          projectId: String(entry.projectId ?? ""),
+          createdAt: String(entry.createdAt ?? new Date().toISOString()),
+          issues: Array.isArray(entry.issues)
+            ? (entry.issues as StoredIssue[])
+            : [],
+          counts:
+            entry.counts && typeof entry.counts === "object"
+              ? (entry.counts as RunRecord["counts"])
+              : { p0: 0, p1: 0, p2: 0, total: 0 },
+          meta: metaRaw
+            ? {
+                scope:
+                  metaRaw.scope === "analysis-only"
+                    ? "analysis-only"
+                    : "full",
+                selectedRoutePaths,
+                projectAnalysis: normalizeProjectAnalysis(
+                  metaRaw.projectAnalysis,
+                ),
+              }
+            : undefined,
+        } satisfies RunRecord;
+      })
+      .filter((run) => run.id && run.projectId);
   } catch {
     return [];
   }

@@ -82,7 +82,11 @@ body {
   min-height: 100vh;
   background:
     radial-gradient(circle at 0% 0%, rgb(37 99 235 / 18%), transparent 35%),
-    radial-gradient(circle at 100% 100%, rgb(20 184 166 / 10%), transparent 35%),
+    radial-gradient(
+      circle at 100% 100%,
+      rgb(20 184 166 / 10%),
+      transparent 35%
+    ),
     hsl(var(--background));
   color: hsl(var(--foreground));
   font-family: "Geist", "Segoe UI", sans-serif;
@@ -112,4 +116,107 @@ body {
   padding: 0.5rem;
   font-size: 0.8rem;
   color: hsl(var(--muted-foreground));
+}
+
+/* Project creation loading overlay — animation timing utilities */
+.spin-slow {
+  animation-duration: 1.1s;
+}
+.spin-slower {
+  animation-duration: 1.7s;
+  animation-direction: reverse;
+}
+.spin-fast {
+  animation-duration: 0.8s;
+}
+
+.delay-0 {
+  animation-delay: 0ms;
+}
+.delay-150 {
+  animation-delay: 150ms;
+}
+.delay-300 {
+  animation-delay: 300ms;
+}
+
+/* ── Landing page decorative background ───────────────────────── */
+.landing-orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(90px);
+  opacity: 0.18;
+  animation: landing-float 10s ease-in-out infinite;
+}
+
+.landing-orb-1 {
+  width: 600px;
+  height: 600px;
+  top: -140px;
+  left: -160px;
+  background: radial-gradient(circle, #10b981, transparent 70%);
+  animation-duration: 12s;
+}
+
+.landing-orb-2 {
+  width: 500px;
+  height: 500px;
+  top: 20%;
+  right: -120px;
+  background: radial-gradient(circle, #3b82f6, transparent 70%);
+  animation-duration: 9s;
+  animation-delay: -3s;
+}
+
+.landing-orb-3 {
+  width: 400px;
+  height: 400px;
+  bottom: 5%;
+  left: 30%;
+  background: radial-gradient(circle, #8b5cf6, transparent 70%);
+  animation-duration: 14s;
+  animation-delay: -6s;
+}
+
+.landing-orb-cta {
+  width: 700px;
+  height: 700px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, #10b981, transparent 60%);
+  opacity: 0.08;
+  animation: none;
+}
+
+.landing-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.04) 1px, transparent 1px);
+  background-size: 64px 64px;
+  -webkit-mask-image: radial-gradient(
+    ellipse 80% 70% at 50% 0%,
+    black 40%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(
+    ellipse 80% 70% at 50% 0%,
+    black 40%,
+    transparent 100%
+  );
+}
+
+@keyframes landing-float {
+  0%,
+  100% {
+    transform: translateY(0px) scale(1);
+  }
+  33% {
+    transform: translateY(-24px) scale(1.04);
+  }
+  66% {
+    transform: translateY(12px) scale(0.97);
+  }
 }

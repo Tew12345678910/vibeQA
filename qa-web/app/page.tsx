@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import { LandingPage } from "@/components/browserqa/LandingPage";
 
 export default function HomePage() {
-  redirect("/projects/new");
+  return <LandingPage />;
 }

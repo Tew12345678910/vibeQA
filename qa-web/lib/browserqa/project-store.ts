@@ -1,4 +1,8 @@
 import { focusSchema, type Focus } from "@/lib/contracts";
+import {
+  normalizeProjectAnalysis,
+  type ProjectAnalysis,
+} from "@/lib/browserqa/project-analysis";
 
 const STORAGE_KEY = "browserqa_projects_v1";
 const DEFAULT_FOCUS: Focus[] = [
@@ -8,6 +12,8 @@ const DEFAULT_FOCUS: Focus[] = [
   "content",
   "functional",
 ];
+
+export type SiteAuthType = "none" | "credentials" | "social";
 
 export type ProjectConfig = {
   id: string;
@@ -23,6 +29,12 @@ export type ProjectConfig = {
   maxClicksPerPage: number;
   focus: Focus[];
   detectedFramework?: string;
+  analysis?: ProjectAnalysis;
+  /** Whether the website requires login to be tested by the browser agent. */
+  siteAuthType?: SiteAuthType;
+  siteUsername?: string;
+  /** Stored in localStorage — not sent server-side; used only for the local browser agent. */
+  sitePassword?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -75,10 +87,34 @@ function safeParse(raw: string | null): ProjectConfig[] {
           detectedFramework: entry.detectedFramework
             ? String(entry.detectedFramework)
             : undefined,
+          analysis: normalizeProjectAnalysis(entry.analysis),
+          siteAuthType:
+            entry.siteAuthType === "credentials"
+              ? "credentials"
+              : entry.siteAuthType === "social"
+                ? "social"
+                : entry.siteAuthType === "none"
+                  ? "none"
+                  : undefined,
+          siteUsername: entry.siteUsername
+            ? String(entry.siteUsername)
+            : undefined,
+          sitePassword: entry.sitePassword
+            ? String(entry.sitePassword)
+            : undefined,
           createdAt: String(entry.createdAt ?? new Date().toISOString()),
           updatedAt: String(entry.updatedAt ?? new Date().toISOString()),
         } satisfies ProjectConfig;
       })
+      .map((project) => ({
+        ...project,
+        routes:
+          project.routes.length > 0
+            ? project.routes
+            : project.analysis?.routes.map((route) => route.path) ?? [],
+        detectedFramework:
+          project.detectedFramework ?? project.analysis?.framework ?? undefined,
+      }))
       .filter((suite) => suite.id && suite.name && suite.baseUrl);
   } catch {
     return [];
@@ -110,6 +146,7 @@ export function createProject(input: {
   routes?: string[];
   focus: Focus[];
   detectedFramework?: string;
+  analysis?: ProjectAnalysis;
 }): ProjectConfig {
   const projects = loadProjects();
   const now = new Date().toISOString();
@@ -132,7 +169,8 @@ export function createProject(input: {
     maxPages: 6,
     maxClicksPerPage: 6,
     focus: input.focus,
-    detectedFramework: input.detectedFramework,
+    detectedFramework: input.detectedFramework ?? input.analysis?.framework,
+    analysis: input.analysis,
     createdAt: now,
     updatedAt: now,
   };
@@ -160,7 +198,20 @@ export function updateProjectTimestamp(id: string): void {
 
 export function patchProject(
   id: string,
-  patch: Partial<Pick<ProjectConfig, "githubRepo" | "websiteUrl" | "name">>,
+  patch: Partial<
+    Pick<
+      ProjectConfig,
+      | "githubRepo"
+      | "websiteUrl"
+      | "name"
+      | "detectedFramework"
+      | "routes"
+      | "analysis"
+      | "siteAuthType"
+      | "siteUsername"
+      | "sitePassword"
+    >
+  >,
 ): ProjectConfig | null {
   const projects = loadProjects();
   const index = projects.findIndex((p) => p.id === id);

@@ -5,13 +5,18 @@ import { z } from "zod";
 
 import { getDbClient } from "@/lib/db/client";
 import { generateAiReport } from "@/lib/ai";
-import { scanProjectFromFiles, compactChecksForAi, scannerNotes } from "@/lib/project-auditor/scanner";
+import {
+  scanProjectFromFiles,
+  compactChecksForAi,
+  scannerNotes,
+} from "@/lib/project-auditor/scanner";
 import {
   browserUseFindingsSchema,
   type BrowserUseTestPlan,
   type StandardsScorecard,
 } from "@/lib/project-auditor/schemas";
 import { generateBrowserUseTestPlan } from "@/lib/project-auditor/test-plan";
+import { analyzeGithubRoutesAndFramework } from "@/lib/browserqa/github-route-analysis";
 import {
   BINARY_EXTENSIONS,
   MAX_FILE_BYTES,
@@ -21,6 +26,7 @@ import {
   TEXT_EXTENSIONS,
 } from "@/lib/project-auditor/constants";
 import { validateHostedHttpsUrl } from "@/lib/utils/urlSafety";
+import { auditRepoWithRag } from "@/lib/rag/service";
 
 type CardPriority = "P0" | "P1" | "P2";
 type CardSource = "local" | "nextjs-api";
@@ -38,7 +44,11 @@ type ImproveCard = {
     risk: string;
   };
   scope: {
-    surfaces: Array<{ kind: "endpoint" | "route"; path: string; method?: string }>;
+    surfaces: Array<{
+      kind: "endpoint" | "route";
+      path: string;
+      method?: string;
+    }>;
     files: Array<{ path: string; line_start: number; line_end: number }>;
   };
   problem: {
@@ -55,12 +65,18 @@ type ImproveCard = {
     summary: string;
     implementation_steps: string[];
     acceptance_criteria: string[];
-    estimated_effort: "S" | "M" | "L";
+    estimated_effort: "XS" | "S" | "M" | "L";
     confidence: "high" | "medium" | "low";
   };
   education: {
     why_it_matters: string;
     rule_of_thumb: string;
+  };
+  telemetry?: {
+    retrieval?: {
+      rule_hits: Array<{ control_id: string; score: number }>;
+      code_hits: Array<{ path: string; line_start: number; line_end: number; score: number }>;
+    };
   };
   status: {
     state: "open";
@@ -152,6 +168,9 @@ const githubScanRequestSchema = z.object({
   repoUrl: z.string().url(),
   projectName: z.string().trim().min(1).max(120).optional(),
   githubToken: z.string().trim().min(1).optional(),
+  projectId: z.string().trim().min(1).optional(),
+  runId: z.string().trim().min(1).optional(),
+  analysisOnly: z.boolean().optional(),
 });
 
 const confirmReviewRequestSchema = z.object({
@@ -185,7 +204,10 @@ function weightPriority(priority: CardPriority): number {
   return 2;
 }
 
-function recalcSummary(cards: ImproveCard[], baseScore: number): RunState["summary"] {
+function recalcSummary(
+  cards: ImproveCard[],
+  baseScore: number,
+): RunState["summary"] {
   const p0 = cards.filter((c) => c.priority === "P0").length;
   const p1 = cards.filter((c) => c.priority === "P1").length;
   const p2 = cards.filter((c) => c.priority === "P2").length;
@@ -198,7 +220,8 @@ function rankAndRenumber(cards: ImproveCard[]): ImproveCard[] {
   const sorted = [...cards].sort((a, b) => {
     const sourceDiff = weightSource(a.source) - weightSource(b.source);
     if (sourceDiff !== 0) return sourceDiff;
-    const priorityDiff = weightPriority(a.priority) - weightPriority(b.priority);
+    const priorityDiff =
+      weightPriority(a.priority) - weightPriority(b.priority);
     if (priorityDiff !== 0) return priorityDiff;
     return a.title.localeCompare(b.title);
   });
@@ -220,13 +243,22 @@ async function ensureBucket(): Promise<void> {
     const created = await client.storage.createBucket(BUCKET, {
       public: false,
     });
-    if (created.error && !created.error.message.toLowerCase().includes("already exists")) {
-      throw new Error(`Failed to create Supabase bucket '${BUCKET}': ${created.error.message}`);
+    if (
+      created.error &&
+      !created.error.message.toLowerCase().includes("already exists")
+    ) {
+      throw new Error(
+        `Failed to create Supabase bucket '${BUCKET}': ${created.error.message}`,
+      );
     }
   }
 }
 
-async function uploadBuffer(filePath: string, data: Buffer, contentType: string): Promise<void> {
+async function uploadBuffer(
+  filePath: string,
+  data: Buffer,
+  contentType: string,
+): Promise<void> {
   const client = getDbClient();
   const result = await client.storage.from(BUCKET).upload(filePath, data, {
     upsert: true,
@@ -234,16 +266,26 @@ async function uploadBuffer(filePath: string, data: Buffer, contentType: string)
   });
 
   if (result.error) {
-    throw new Error(`Storage upload failed for ${filePath}: ${result.error.message}`);
+    throw new Error(
+      `Storage upload failed for ${filePath}: ${result.error.message}`,
+    );
   }
 }
 
 async function uploadJson(filePath: string, value: unknown): Promise<void> {
   const serialized = `${JSON.stringify(value, null, 2)}\n`;
-  await uploadBuffer(filePath, Buffer.from(serialized, "utf8"), "application/json; charset=utf-8");
+  await uploadBuffer(
+    filePath,
+    Buffer.from(serialized, "utf8"),
+    "application/json; charset=utf-8",
+  );
 }
 
-async function uploadText(filePath: string, text: string, contentType: string): Promise<void> {
+async function uploadText(
+  filePath: string,
+  text: string,
+  contentType: string,
+): Promise<void> {
   await uploadBuffer(filePath, Buffer.from(text, "utf8"), contentType);
 }
 
@@ -251,7 +293,9 @@ async function downloadText(filePath: string): Promise<string> {
   const client = getDbClient();
   const result = await client.storage.from(BUCKET).download(filePath);
   if (result.error || !result.data) {
-    throw new Error(`Storage download failed for ${filePath}: ${result.error?.message ?? "missing data"}`);
+    throw new Error(
+      `Storage download failed for ${filePath}: ${result.error?.message ?? "missing data"}`,
+    );
   }
   return result.data.text();
 }
@@ -270,7 +314,10 @@ function parseGithubRepoUrl(repoUrl: string): {
   if (parsed.protocol !== "https:") {
     throw new Error("GitHub URL must use https");
   }
-  if (parsed.hostname !== "github.com" && parsed.hostname !== "www.github.com") {
+  if (
+    parsed.hostname !== "github.com" &&
+    parsed.hostname !== "www.github.com"
+  ) {
     throw new Error("Only github.com repository URLs are supported");
   }
 
@@ -325,7 +372,9 @@ function isTextCandidate(filePath: string): boolean {
   const ext = path.extname(filePath).toLowerCase();
   if (!ext) {
     const base = path.basename(filePath).toLowerCase();
-    return ["dockerfile", "makefile", "readme", "license", ".env"].includes(base);
+    return ["dockerfile", "makefile", "readme", "license", ".env"].includes(
+      base,
+    );
   }
   return TEXT_EXTENSIONS.has(ext);
 }
@@ -367,7 +416,10 @@ async function mapWithConcurrency<T, R>(
     }
   };
 
-  const workers = Array.from({ length: Math.max(1, Math.min(concurrency, items.length)) }, () => runner());
+  const workers = Array.from(
+    { length: Math.max(1, Math.min(concurrency, items.length)) },
+    () => runner(),
+  );
   await Promise.all(workers);
   return results;
 }
@@ -377,31 +429,41 @@ async function fetchRepoMetadata(args: {
   repo: string;
   githubToken?: string;
 }): Promise<{ defaultBranch: string | null }> {
-  const response = await fetch(`https://api.github.com/repos/${args.owner}/${args.repo}`, {
-    headers: githubHeaders(args.githubToken),
-    signal: AbortSignal.timeout(15_000),
-  });
+  const response = await fetch(
+    `https://api.github.com/repos/${args.owner}/${args.repo}`,
+    {
+      headers: githubHeaders(args.githubToken),
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
 
   if (response.ok) {
     const body = (await response.json()) as { default_branch?: string };
     return {
-      defaultBranch: typeof body.default_branch === "string" ? body.default_branch : null,
+      defaultBranch:
+        typeof body.default_branch === "string" ? body.default_branch : null,
     };
   }
 
   if (response.status === 404) {
     if (!args.githubToken) {
-      throw new Error("Repository not accessible. Connect GitHub to scan private repositories.");
+      throw new Error(
+        "Repository not accessible. Connect GitHub to scan private repositories.",
+      );
     }
     throw new Error("Repository not found or token has no access.");
   }
 
   if (response.status === 401) {
-    throw new Error("GitHub token is invalid or expired. Reconnect GitHub and try again.");
+    throw new Error(
+      "GitHub token is invalid or expired. Reconnect GitHub and try again.",
+    );
   }
 
   if (response.status === 403) {
-    throw new Error("GitHub API access denied (403). Check token scopes or rate limits.");
+    throw new Error(
+      "GitHub API access denied (403). Check token scopes or rate limits.",
+    );
   }
 
   throw new Error(`GitHub repository lookup failed (${response.status}).`);
@@ -424,7 +486,9 @@ async function fetchRepoTreeByRef(args: {
   if (response.ok) {
     const payload = (await response.json()) as GitTreePayload;
     if (payload.truncated) {
-      throw new Error("Repository tree is too large for GitHub tree API recursion.");
+      throw new Error(
+        "Repository tree is too large for GitHub tree API recursion.",
+      );
     }
     return Array.isArray(payload.tree) ? payload.tree : [];
   }
@@ -434,25 +498,35 @@ async function fetchRepoTreeByRef(args: {
   }
 
   if (response.status === 401) {
-    throw new Error("GitHub token is invalid or expired. Reconnect GitHub and try again.");
+    throw new Error(
+      "GitHub token is invalid or expired. Reconnect GitHub and try again.",
+    );
   }
 
   if (response.status === 403) {
     const remaining = response.headers.get("x-ratelimit-remaining");
     if (remaining === "0") {
-      throw new Error("GitHub API rate limit reached while reading repository tree.");
+      throw new Error(
+        "GitHub API rate limit reached while reading repository tree.",
+      );
     }
-    throw new Error("GitHub API access denied (403) while reading repository tree.");
+    throw new Error(
+      "GitHub API access denied (403) while reading repository tree.",
+    );
   }
 
   if (response.status === 409) {
     throw new Error("Repository is empty or unavailable for tree scan.");
   }
 
-  throw new Error(`GitHub tree API failed (${response.status}) for ref '${args.ref}'.`);
+  throw new Error(
+    `GitHub tree API failed (${response.status}) for ref '${args.ref}'.`,
+  );
 }
 
-function selectCandidateBlobs(entries: GitTreeEntry[]): Array<{ path: string; sha: string; size: number }> {
+function selectCandidateBlobs(
+  entries: GitTreeEntry[],
+): Array<{ path: string; sha: string; size: number }> {
   const candidates: Array<{ path: string; sha: string; size: number }> = [];
 
   for (const entry of entries) {
@@ -480,7 +554,10 @@ function selectCandidateBlobs(entries: GitTreeEntry[]): Array<{ path: string; sh
     throw new Error(`File scan cap exceeded (${MAX_SCAN_FILES} files)`);
   }
 
-  const projectedBytes = candidates.reduce((acc, candidate) => acc + candidate.size, 0);
+  const projectedBytes = candidates.reduce(
+    (acc, candidate) => acc + candidate.size,
+    0,
+  );
   if (projectedBytes > MAX_TOTAL_BYTES) {
     throw new Error(
       `Total scanned bytes exceeded cap (${Math.floor(MAX_TOTAL_BYTES / (1024 * 1024))}MB)`,
@@ -506,18 +583,26 @@ async function fetchBlobContent(args: {
 
   if (!response.ok) {
     if (response.status === 404) return null;
-    if (response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0") {
-      throw new Error("GitHub API rate limit reached while reading file blobs.");
+    if (
+      response.status === 403 &&
+      response.headers.get("x-ratelimit-remaining") === "0"
+    ) {
+      throw new Error(
+        "GitHub API rate limit reached while reading file blobs.",
+      );
     }
     throw new Error(`GitHub blob API failed (${response.status})`);
   }
 
   const payload = (await response.json()) as GitBlobPayload;
   if (payload.truncated) return null;
-  if (typeof payload.size === "number" && payload.size > MAX_FILE_BYTES) return null;
+  if (typeof payload.size === "number" && payload.size > MAX_FILE_BYTES)
+    return null;
 
   if (payload.encoding === "base64" && typeof payload.content === "string") {
-    return Buffer.from(payload.content.replace(/\n/g, ""), "base64").toString("utf8");
+    return Buffer.from(payload.content.replace(/\n/g, ""), "base64").toString(
+      "utf8",
+    );
   }
 
   if (typeof payload.content === "string") {
@@ -527,6 +612,7 @@ async function fetchBlobContent(args: {
   return null;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function loadGithubSourceFiles(args: {
   repoUrl: string;
   githubToken?: string;
@@ -556,26 +642,38 @@ async function loadGithubSourceFiles(args: {
   }
 
   if (!tree) {
-    throw new Error("Unable to resolve repository tree. Check repository URL and branch.");
+    throw new Error(
+      "Unable to resolve repository tree. Check repository URL and branch.",
+    );
   }
 
   const candidates = selectCandidateBlobs(tree);
 
-  const contents = await mapWithConcurrency(candidates, 8, async (candidate) => {
-    const content = await fetchBlobContent({
-      owner: parsed.owner,
-      repo: parsed.repo,
-      sha: candidate.sha,
-      githubToken: args.githubToken,
-    });
-    if (content === null) return null;
-    return { path: candidate.path, content };
-  });
+  const contents = await mapWithConcurrency(
+    candidates,
+    8,
+    async (candidate) => {
+      const content = await fetchBlobContent({
+        owner: parsed.owner,
+        repo: parsed.repo,
+        sha: candidate.sha,
+        githubToken: args.githubToken,
+      });
+      if (content === null) return null;
+      return { path: candidate.path, content };
+    },
+  );
 
-  return contents.filter((entry): entry is { path: string; content: string } => entry !== null);
+  return contents.filter(
+    (entry): entry is { path: string; content: string } => entry !== null,
+  );
 }
 
-function checkToCard(check: StandardsScorecard["checks"][number], index: number, createdAt: string): ImproveCard {
+function checkToCard(
+  check: StandardsScorecard["checks"][number],
+  index: number,
+  createdAt: string,
+): ImproveCard {
   const firstEvidence = check.evidence[0];
 
   return {
@@ -587,7 +685,8 @@ function checkToCard(check: StandardsScorecard["checks"][number], index: number,
     standard_refs: [{ name: check.standard, type: "internal" }],
     impact: {
       user: "Users may experience inconsistent behavior and reduced reliability.",
-      business: "Unresolved API quality issues increase support and maintenance cost.",
+      business:
+        "Unresolved API quality issues increase support and maintenance cost.",
       risk: "Gaps in standards can become production reliability and security incidents.",
     },
     scope: {
@@ -615,7 +714,8 @@ function checkToCard(check: StandardsScorecard["checks"][number], index: number,
       })),
     },
     recommendation: {
-      summary: check.recommendations[0] ?? "Apply project standards consistently.",
+      summary:
+        check.recommendations[0] ?? "Apply project standards consistently.",
       implementation_steps: check.recommendations,
       acceptance_criteria: [
         "Updated endpoint behavior passes regression checks.",
@@ -646,7 +746,9 @@ function findingsToCards(args: {
     .filter((finding) => finding.result === "fail")
     .map((finding, index) => {
       const endpointMatch = args.scan.scorecard.endpoints.find(
-        (endpoint) => finding.path.startsWith(endpoint.path) || endpoint.path.startsWith(finding.path),
+        (endpoint) =>
+          finding.path.startsWith(endpoint.path) ||
+          endpoint.path.startsWith(finding.path),
       );
 
       return {
@@ -655,7 +757,9 @@ function findingsToCards(args: {
         title: `Browser finding on ${finding.path}`,
         priority: finding.severity,
         category: "UX",
-        standard_refs: [{ name: finding.testId || "BrowserUse", type: "internal" }],
+        standard_refs: [
+          { name: finding.testId || "BrowserUse", type: "internal" },
+        ],
         impact: {
           user: finding.observed,
           business: "User-facing regressions degrade conversion and trust.",
@@ -668,7 +772,13 @@ function findingsToCards(args: {
               path: finding.path,
             },
             ...(endpointMatch
-              ? [{ kind: "endpoint" as const, path: endpointMatch.path, method: endpointMatch.method }]
+              ? [
+                  {
+                    kind: "endpoint" as const,
+                    path: endpointMatch.path,
+                    method: endpointMatch.method,
+                  },
+                ]
               : []),
           ],
           files: endpointMatch
@@ -707,8 +817,10 @@ function findingsToCards(args: {
           confidence: "medium",
         },
         education: {
-          why_it_matters: "Browser-level failures directly affect user experience and confidence.",
-          rule_of_thumb: "Every critical route should have repeatable browser checks with evidence.",
+          why_it_matters:
+            "Browser-level failures directly affect user experience and confidence.",
+          rule_of_thumb:
+            "Every critical route should have repeatable browser checks with evidence.",
         },
         status: {
           state: "open",
@@ -733,6 +845,7 @@ function toPublicProjectName(input?: string, fallback = "my-app"): string {
   return value ? value.slice(0, 120) : fallback;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function buildScanState(args: {
   sourceFiles: Array<{ path: string; content: string }>;
   projectName?: string;
@@ -779,7 +892,10 @@ async function buildScanState(args: {
       ...scan.scorecard,
       project: {
         ...scan.scorecard.project,
-        name: toPublicProjectName(args.projectName, scan.scorecard.project.name),
+        name: toPublicProjectName(
+          args.projectName,
+          scan.scorecard.project.name,
+        ),
       },
     },
     browserUseTestPlan,
@@ -798,7 +914,11 @@ async function buildScanState(args: {
   await Promise.all([
     uploadJson(state.artifacts.scorecardPath, state.scorecard),
     uploadJson(state.artifacts.testPlanPath, state.browserUseTestPlan),
-    uploadText(state.artifacts.aiReportPath, ai.markdown, "text/markdown; charset=utf-8"),
+    uploadText(
+      state.artifacts.aiReportPath,
+      ai.markdown,
+      "text/markdown; charset=utf-8",
+    ),
     uploadJson(state.artifacts.scanStatePath, state),
   ]);
 
@@ -817,7 +937,10 @@ async function readRunState(runId: string): Promise<RunState> {
   return downloadJson<RunState>(`${makeRunPrefix(runId)}/run_state.json`);
 }
 
-function getBrowserUseConfig(): { baseUrl: string | null; apiKey: string | null } {
+function getBrowserUseConfig(): {
+  baseUrl: string | null;
+  apiKey: string | null;
+} {
   return {
     baseUrl: process.env.BROWSER_USE_SERVER_BASE_URL ?? null,
     apiKey: process.env.BROWSER_USE_SERVER_API_KEY ?? null,
@@ -834,7 +957,10 @@ function requestHeaders(apiKey: string | null): Record<string, string> {
   return headers;
 }
 
-function readField<T>(raw: Record<string, unknown>, keys: string[]): T | undefined {
+function readField<T>(
+  raw: Record<string, unknown>,
+  keys: string[],
+): T | undefined {
   for (const key of keys) {
     const value = raw[key];
     if (value !== undefined && value !== null) {
@@ -899,7 +1025,9 @@ async function startRemoteReview(args: {
 
   const raw = (await response.json()) as Record<string, unknown>;
   const reviewId = readField<string>(raw, ["reviewId", "id", "runId"]);
-  const statusRaw = String(readField<string>(raw, ["status", "state"]) ?? "queued").toLowerCase();
+  const statusRaw = String(
+    readField<string>(raw, ["status", "state"]) ?? "queued",
+  ).toLowerCase();
 
   return {
     remote: {
@@ -917,7 +1045,10 @@ async function startRemoteReview(args: {
   };
 }
 
-async function pollRemoteFindings(runState: RunState, scan: ScanState): Promise<RunState> {
+async function pollRemoteFindings(
+  runState: RunState,
+  scan: ScanState,
+): Promise<RunState> {
   if (!["queued", "running"].includes(runState.remote.status)) {
     return runState;
   }
@@ -972,7 +1103,9 @@ async function pollRemoteFindings(runState: RunState, scan: ScanState): Promise<
   }
 
   const raw = (await response.json()) as Record<string, unknown>;
-  const rawStatus = String(readField<string>(raw, ["status", "state"]) ?? "running").toLowerCase();
+  const rawStatus = String(
+    readField<string>(raw, ["status", "state"]) ?? "running",
+  ).toLowerCase();
 
   if (["queued", "running", "in_progress"].includes(rawStatus)) {
     return {
@@ -1025,38 +1158,157 @@ async function pollRemoteFindings(runState: RunState, scan: ScanState): Promise<
 
 export async function scanGithubRepo(input: unknown) {
   const parsed = githubScanRequestSchema.parse(input);
-  const sourceFiles = await loadGithubSourceFiles({
-    repoUrl: parsed.repoUrl,
-    githubToken: parsed.githubToken,
-  });
   const guessedName = parseGithubRepoUrl(parsed.repoUrl).repo;
+  const projectId = parsed.projectId?.trim();
+  const runId = parsed.runId?.trim();
 
-  const state = await buildScanState({
-    sourceFiles,
-    projectName: parsed.projectName ?? guessedName,
-  });
-
-  return {
-    scanId: state.scanId,
-    project: {
-      name: state.project.name,
-      framework: state.project.framework,
-      router: state.project.router,
-    },
-    routes: state.routes,
-    endpointCount: state.endpointCount,
-    summary: state.summary,
-    report: {
-      id: state.scanId,
-      project: {
-        name: state.project.name,
-        framework: state.project.framework,
+  const seedRunIfNeeded = async (
+    status: "running" | "failed",
+    errorMessage?: string,
+  ) => {
+    if (!projectId || !runId) return;
+    const db = getDbClient();
+    const nowIso = new Date().toISOString();
+    const { error } = await db.from("project_runs").upsert(
+      {
+        id: runId,
+        project_id: projectId,
+        count_p0: 0,
+        count_p1: 0,
+        count_p2: 0,
+        count_total: 0,
+        created_at: nowIso,
+        meta_json: {
+          status,
+          scanner: "rag-openai",
+          repo_url: parsed.repoUrl,
+          error: errorMessage ?? null,
+        },
       },
-      generated_at: state.generatedAt,
-      summary: state.summary,
-    },
-    cards: rankAndRenumber(state.localCards),
+      { onConflict: "id" },
+    );
+    if (error) {
+      throw new Error(`Failed to seed project run: ${error.message}`);
+    }
   };
+
+  if (!parsed.analysisOnly) {
+    await seedRunIfNeeded("running");
+  }
+
+  try {
+    if (parsed.analysisOnly) {
+      const analysis = await analyzeGithubRoutesAndFramework({
+        repoUrl: parsed.repoUrl,
+        projectName: parsed.projectName ?? guessedName,
+        githubToken: parsed.githubToken,
+      });
+
+      return {
+        scanId: analysis.scanId,
+        runId: null,
+        status: "completed",
+        project: {
+          name: analysis.project.name,
+          framework: analysis.project.framework,
+          router: analysis.project.router,
+        },
+        routes: analysis.routes,
+        routeInsights: analysis.routeInsights,
+        endpointCount: analysis.endpointCount,
+        summary: {
+          score: 100,
+          p0: 0,
+          p1: 0,
+          p2: 0,
+        },
+        report: {
+          id: analysis.scanId,
+          project: {
+            name: analysis.project.name,
+            framework: analysis.project.framework,
+          },
+          generated_at: new Date().toISOString(),
+          summary: {
+            score: 100,
+            p0: 0,
+            p1: 0,
+            p2: 0,
+          },
+        },
+        cards: [],
+      };
+    }
+
+    const analysisPromise = analyzeGithubRoutesAndFramework({
+      repoUrl: parsed.repoUrl,
+      projectName: parsed.projectName ?? guessedName,
+      githubToken: parsed.githubToken,
+    }).catch(() => null);
+
+    const rag = await auditRepoWithRag({
+      repoUrl: parsed.repoUrl,
+      projectName: parsed.projectName ?? guessedName,
+      githubToken: parsed.githubToken,
+      projectId,
+      runId,
+    });
+    const analysis = await analysisPromise;
+
+    return {
+      scanId: rag.scanId,
+      runId: runId ?? null,
+      status: runId ? "completed" : "done",
+      project: {
+        name:
+          analysis?.project.name ??
+          toPublicProjectName(parsed.projectName, guessedName),
+        framework: analysis?.project.framework ?? "unknown",
+        router: analysis?.project.router ?? "unknown",
+      },
+      routes: analysis?.routes ?? [],
+      routeInsights: analysis?.routeInsights ?? [],
+      endpointCount: analysis?.endpointCount ?? 0,
+      commitSha: rag.commitSha,
+      indexedFiles: rag.indexedFileCount,
+      summary: {
+        score: Math.max(
+          0,
+          100 - (rag.counts.p0 * 12 + rag.counts.p1 * 6 + rag.counts.p2 * 3),
+        ),
+        p0: rag.counts.p0,
+        p1: rag.counts.p1,
+        p2: rag.counts.p2,
+      },
+      report: {
+        id: runId ?? rag.scanId,
+        project: {
+          name:
+            analysis?.project.name ??
+            toPublicProjectName(parsed.projectName, guessedName),
+          framework: analysis?.project.framework ?? "unknown",
+        },
+        generated_at: new Date().toISOString(),
+        summary: {
+          score: Math.max(
+            0,
+            100 - (rag.counts.p0 * 12 + rag.counts.p1 * 6 + rag.counts.p2 * 3),
+          ),
+          p0: rag.counts.p0,
+          p1: rag.counts.p1,
+          p2: rag.counts.p2,
+        },
+      },
+      cards: rag.cards,
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "GitHub scan failed";
+    if (!parsed.analysisOnly) {
+      await seedRunIfNeeded("failed", message);
+    }
+    throw error;
+  }
 }
 
 export async function confirmProjectReview(input: unknown) {
@@ -1125,7 +1377,10 @@ export async function getIssuesReport(runId: string): Promise<ReportResponse> {
 
   const refreshed = await pollRemoteFindings(current, scan);
 
-  const combined = rankAndRenumber([...refreshed.localCards, ...refreshed.remoteCards]);
+  const combined = rankAndRenumber([
+    ...refreshed.localCards,
+    ...refreshed.remoteCards,
+  ]);
   const summary = recalcSummary(combined, scan.summary.score);
 
   const finalState: RunState = {
@@ -1145,7 +1400,10 @@ export async function getIssuesReport(runId: string): Promise<ReportResponse> {
       generated_at: finalState.updatedAt,
       summary: finalState.summary,
     },
-    cards: rankAndRenumber([...finalState.localCards, ...finalState.remoteCards]),
+    cards: rankAndRenumber([
+      ...finalState.localCards,
+      ...finalState.remoteCards,
+    ]),
     remote: finalState.remote,
   };
 }

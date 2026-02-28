@@ -23,10 +23,11 @@ Last verified against codebase: 2026-02-28.
 The repository is now centered on a unified project QA pipeline with these core building blocks:
 
 1. GitHub repository intake (OAuth + repository picker or URL)
-2. Static scanner for Next.js API and standards checks
-3. AI report generation from scanner outputs
-4. Browser-use review orchestration (server-side, async)
-5. Unified issues result contract (`report` + `cards`)
+2. Project analysis scan (framework + router + route purposes)
+3. Static scanner for Next.js API and standards checks
+4. AI report generation from scanner outputs
+5. Browser-use review orchestration (server-side, async)
+6. Unified issues result contract (`report` + `cards`)
 
 The **supported entry route** is `/projects/new`.
 
@@ -34,6 +35,12 @@ The **supported entry route** is `/projects/new`.
 
 ### Pipeline (supported flow)
 - `/projects/new` — New project creation form; GitHub repo picker or manual URL; optional website URL
+- `/projects/[projectId]/run` — Run page; supports:
+  - dedicated project analysis scan (framework + routes)
+  - auto analysis when missing
+  - normal scan modes (`Codebase`, `URL`, `Both`)
+  - route-scope rerun (`All pages`, `Analyzed pages`)
+  - analyzed route tree in sidebar
 - `/auth/github-callback` — Supabase GitHub OAuth callback; stores `github_provider_token` in `sessionStorage`
 - `/issues?runId=<RUN-ID>` — Renders unified issue report from `GET /api/issues`
 
@@ -64,19 +71,89 @@ The **primary supported pipeline entry** is `/projects/new`.
   - Header: `x-github-token: <provider_token>`
   - Returns repositories visible to the authenticated GitHub user (public/private according to token scope)
 
+### Project management
+- `GET /api/projects`
+  - Returns all projects ordered by `created_at DESC`
+  - Response: `{ projects: ProjectRow[] }`
+
+- `POST /api/projects`
+  - Creates or upserts a project in `public.projects`
+  - Body: `{ id, name, sourceType?, githubRepo?, websiteUrl?, baseUrl?, configJson? }`
+  - Returns `201 { ok: true }`
+
+- `PATCH /api/projects/:id`
+  - Updates `name`, `github_repo`, `website_url`, and/or `config_json` for a project
+  - Body: `{ name?, githubRepo?, websiteUrl?, configJson? }`
+  - Returns `200 { ok: true }`
+
+- `DELETE /api/projects/:id`
+  - Deletes project row (cascades to `project_runs` and `run_issues`)
+  - Returns `200 { ok: true }`
+
+### Run management
+- `GET /api/projects/:id/runs`
+  - Returns all runs for a project (newest first, capped at 50) with their issues embedded
+  - Response: `{ runs: ProjectRunRow[] }` where each run includes `issues: RunIssueRow[]`
+
+- `POST /api/projects/:id/runs`
+  - Saves a completed scan run and its issues to `public.project_runs` + `public.run_issues`
+  - Body:
+    - `id`
+    - `createdAt?`
+    - `counts: { p0, p1, p2, total }`
+    - `analysis?: { framework?, router?, routes?: Array<{ path, purpose, criticality? }> }`
+    - `metaJson?`
+    - `issues: IssueInput[]` where each issue may include `cardJson`, `filePath`, `endpoint`, `confidence`, `state`
+  - Returns `201 { ok: true }`
+
+- `GET /api/projects/:id/runs/:runId`
+  - Returns a single run snapshot with status and normalized counts
+  - Used by the run page to poll long-running repository scans
+  - Response shape:
+    - `run: { id, projectId, createdAt, counts, meta }`
+    - `status`
+    - `counts`
+    - `issues`
+
 ### Pipeline scan/review/issues
+- `POST /api/pipeline/analysis/github`
+  - Route file: `app/api/pipeline/analysis/github/route.ts` → calls `analyzeGithubRoutesAndFramework()`
+  - Dedicated framework + route analysis endpoint (separate from RAG issue scanning)
+  - Input JSON:
+    - `repoUrl: string` (required)
+    - `projectName?: string`
+    - `githubToken?: string` (optional; may also be sent via `x-github-token` header)
+  - Returns:
+    - `scanId`
+    - `project: { name, framework, router }`
+    - `routes`
+    - `routeInsights` (path + purpose + criticality)
+    - `endpointCount`
+
 - `POST /api/pipeline/scans/github`
   - Route file: `app/api/pipeline/scans/github/route.ts` → calls `scanGithubRepo()`
   - Input JSON:
     - `repoUrl: string` (required)
     - `projectName?: string`
     - `githubToken?: string` (optional; may also be sent via `x-github-token` header)
+    - `projectId?: string` (optional; when supplied with `runId`, allows per-run persistence/polling)
+    - `runId?: string` (optional)
+    - `analysisOnly?: boolean` (optional compatibility mode; prefer `/api/pipeline/analysis/github`)
   - Behavior:
-    - Resolves repository tree via GitHub API
-    - Loads text files only (safe static scan)
-    - Generates scorecard/test plan/AI report artifacts in Supabase storage
+    - Runs RAG/static repository audit for issue detection
+    - Refreshes framework + route analysis via the dedicated analysis service
   - Returns:
-    - `scanId`, project metadata, summary, and local issue cards
+    - `scanId`, project metadata, summary, route list, `routeInsights` (path + purpose + criticality), and local issue cards
+
+- `POST /api/pipeline/browser-scan`
+  - Mock browser scan endpoint for run page integration
+  - Input JSON:
+    - `url: string`
+    - `projectName?: string`
+    - `instruction?: string`
+    - `routes?: string[]` (used for analysis-only reruns)
+  - Returns:
+    - `issues: Array<{ id, title, priority, category, description }>`
 
 - `POST /api/pipeline/scans/zip` *(in progress — route directory exists, implementation pending)*
   - Will accept a zip upload and run the same static scan pipeline as the GitHub path
@@ -118,7 +195,57 @@ The **primary supported pipeline entry** is `/projects/new`.
 - `BROWSER_USE_SERVER_BASE_URL` (optional; when missing, remote review state becomes `disabled`)
 - `BROWSER_USE_SERVER_API_KEY` (optional)
 
-## 5. Supabase Storage Artifacts
+## 5. Supabase Tables
+
+### `public.projects`
+| Column | Type | Nullable | Notes |
+|--------|------|----------|-------|
+| `id` | `text` | NO | Client-generated UUID |
+| `name` | `text` | NO | |
+| `source_type` | `text` | NO | `'github'` or `'local'` |
+| `github_repo` | `text` | YES | Full GitHub URL |
+| `website_url` | `text` | YES | |
+| `base_url` | `text` | NO | |
+| `config_json` | `jsonb` | NO | Extra config blob |
+| `created_at` | `timestamptz` | NO | |
+| `updated_at` | `timestamptz` | NO | |
+
+### `public.project_runs`
+| Column | Type | Nullable | Notes |
+|--------|------|----------|-------|
+| `id` | `text` | NO | Client-generated UUID |
+| `project_id` | `text` | NO | FK → `projects.id` CASCADE |
+| `count_p0` | `int` | NO | |
+| `count_p1` | `int` | NO | |
+| `count_p2` | `int` | NO | |
+| `count_total` | `int` | NO | |
+| `analysis_framework` | `text` | YES | Framework snapshot at run time |
+| `analysis_router` | `text` | YES | Router snapshot (`app|pages|unknown`) |
+| `analysis_routes_json` | `jsonb` | NO | Route details for the run (`path`, `purpose`, `criticality`) |
+| `meta_json` | `jsonb` | NO | Run metadata (`scope`, `selectedRoutePaths`, progress/status fields, analysis snapshot) |
+| `created_at` | `timestamptz` | NO | |
+
+### `public.run_issues`
+| Column | Type | Nullable | Notes |
+|--------|------|----------|-------|
+| `id` | `bigserial` | NO | |
+| `run_id` | `text` | NO | FK → `project_runs.id` CASCADE |
+| `project_id` | `text` | NO | Denormalized for fast queries |
+| `issue_id` | `text` | NO | Client issue ID |
+| `source` | `text` | NO | `'github'` or `'browser'` |
+| `title` | `text` | NO | |
+| `priority` | `text` | NO | `'P0'`, `'P1'`, or `'P2'` |
+| `category` | `text` | NO | |
+| `description` | `text` | YES | |
+| `card_json` | `jsonb` | YES | Full structured card payload |
+| `file_path` | `text` | YES | Related source file path |
+| `endpoint` | `text` | YES | Related endpoint/route |
+| `confidence` | `text` | YES | Confidence marker |
+| `state` | `text` | YES | Issue lifecycle state |
+
+All three tables have RLS enabled. The service-role key used server-side bypasses RLS.
+
+## 6. Supabase Storage Artifacts
 Bucket: `qa-project-artifacts` (or `SUPABASE_STORAGE_BUCKET`).
 
 ### Scan artifacts
@@ -132,7 +259,7 @@ Bucket: `qa-project-artifacts` (or `SUPABASE_STORAGE_BUCKET`).
 - `pipeline/runs/<runId>/browser_use_request.json`
 - `pipeline/runs/<runId>/browser_use_findings.json` (when review completes)
 
-## 6. Static Scanner Behavior
+## 7. Static Scanner Behavior
 Scanner is static and safe (no user code execution).
 
 Current scanner capabilities:
@@ -151,13 +278,28 @@ Current scanner capabilities:
   - requestId/logging signals
   - pagination + max-limit signals
 
-## 7. AI Integration
+## 7.1 Project Analysis Data (Framework + Routes)
+Project analysis is now treated as a first-class run input/output:
+
+- At project creation (`/projects/new`), GitHub projects trigger an analysis scan.
+- On run page, analysis can be run separately via a dedicated "Scan" action.
+- If analysis is missing, run page auto-triggers analysis.
+- Normal run refreshes analysis as part of the run workflow.
+- Analysis UI renders:
+  - framework label with framework brand icon (when recognized)
+  - router type
+  - analyzed route tree with per-route purpose text
+- Rerun can target only analyzed pages using route scope selector.
+
+Route purpose text is normalized to be more specific (e.g. auth entry, project list, detail page flows), and those purposes are persisted per run in `project_runs.analysis_routes_json`.
+
+## 8. AI Integration
 AI report generation is server-side only (`lib/ai.ts`).
 Inputs are constrained to scanner outputs (summary, endpoints, checks, stack, UI routes), not whole repository source dumps.
 
 Outputs are written as markdown artifact and used to enrich planning guidance.
 
-## 8. Browser-use Contracts
+## 9. Browser-use Contracts
 ### Generated requirement payload (`browser_use_test_plan.json`)
 ```json
 {
@@ -196,7 +338,7 @@ Outputs are written as markdown artifact and used to enrich planning guidance.
 }
 ```
 
-## 9. Unified Issues Response Contract
+## 10. Unified Issues Response Contract
 `GET /api/issues?runId=<RUN-ID>` returns:
 
 ```json
@@ -223,22 +365,26 @@ Card ordering is deterministic:
 
 `ImproveCard` type is defined in `lib/pipeline/service.ts`. Legacy audit schemas (separate auditing domain) live in `lib/contracts.ts`.
 
-## 10. GitHub OAuth Flow Details
+## 11. GitHub OAuth Flow Details
 1. User clicks connect in repo picker.
 2. Supabase OAuth starts with scopes: `read:user user:email repo`.
 3. Callback route exchanges code/session.
 4. `provider_token` is stored in `sessionStorage` under `github_provider_token`.
 5. Repo picker calls `/api/github/repos` with `x-github-token`.
 
-## 11. Local Run Checklist
+## 12. Local Run Checklist
 1. `pnpm install`
 2. Copy `.env.local.example` → `.env.local` and fill in variables from Section 4
-3. `pnpm db:setup` (runs `scripts/setup-db.ts` via `tsx` to apply DB migrations)
-4. `pnpm dev`
-5. Open `http://localhost:3000/projects/new`
-6. Connect GitHub and select repository or paste GitHub URL
-7. Start pipeline via API integration (`POST /api/pipeline/scans/github` → `POST /api/pipeline/reviews`)
-8. Open `/issues?runId=<RUN-ID>` to view merged findings
+3. Apply SQL migrations in Supabase (or `supabase db push`) including:
+   - `supabase/migrations/20260228_runs_issues_tables.sql`
+   - `supabase/migrations/20260228_project_runs_meta_json.sql`
+   - `supabase/migrations/20260228_project_runs_analysis_columns.sql`
+4. `pnpm db:setup` (runs `scripts/setup-db.ts` to verify schema availability)
+5. `pnpm dev`
+6. Open `http://localhost:3000/projects/new`
+7. Connect GitHub and select repository or paste GitHub URL
+8. Start pipeline via API integration (`POST /api/pipeline/scans/github` → `POST /api/pipeline/reviews`)
+9. Open `/issues?runId=<RUN-ID>` to view merged findings
 
 ### Useful scripts
 | Command | Purpose |
@@ -246,11 +392,11 @@ Card ordering is deterministic:
 | `pnpm dev` | Start Next.js dev server |
 | `pnpm build` | Production build |
 | `pnpm lint` | ESLint (Next.js config) |
-| `pnpm db:setup` | Apply Supabase DB schema |
+| `pnpm db:setup` | Verify Supabase DB schema connectivity/readiness |
 
 ---
 
-## 12. Known Improve Cards
+## 13. Known Improve Cards
 
 Active `ImproveCard` findings tracked against this project.
 

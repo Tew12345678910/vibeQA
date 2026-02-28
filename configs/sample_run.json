@@ -1,0 +1,8 @@
+{
+  "project_path": "./sample_project/src",
+  "base_url": "http://127.0.0.1:4173",
+  "include_extensions": [".js", ".jsx", ".ts", ".tsx", ".html"],
+  "max_files": 300,
+  "headless": true,
+  "browser": "chromium"
+}

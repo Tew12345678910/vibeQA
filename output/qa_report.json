@@ -1,0 +1,410 @@
+{
+  "analysis_summary": {
+    "scanned_files": 2,
+    "routes_found": [
+      "/",
+      "/about"
+    ],
+    "expected_text_count": 4,
+    "expected_title_count": 1
+  },
+  "test_summary": {
+    "total": 9,
+    "passed": 6,
+    "failed": 3
+  },
+  "results": [
+    {
+      "case": {
+        "case_id": "AUTO-001",
+        "name": "Route availability /",
+        "path": "/",
+        "assertions": [
+          {
+            "kind": "url_path_equals",
+            "value": "/",
+            "source": null
+          }
+        ],
+        "origin": "auto"
+      },
+      "passed": true,
+      "assertion_results": [
+        {
+          "assertion": {
+            "kind": "url_path_equals",
+            "value": "/",
+            "source": null
+          },
+          "passed": true,
+          "actual": "/",
+          "message": "expected path=/"
+        }
+      ],
+      "screenshot_path": "/Users/tew/Documents/qateam/output/screenshots/AUTO-001.png",
+      "error": null
+    },
+    {
+      "case": {
+        "case_id": "AUTO-002",
+        "name": "Route availability /about",
+        "path": "/about",
+        "assertions": [
+          {
+            "kind": "url_path_equals",
+            "value": "/about",
+            "source": null
+          }
+        ],
+        "origin": "auto"
+      },
+      "passed": true,
+      "assertion_results": [
+        {
+          "assertion": {
+            "kind": "url_path_equals",
+            "value": "/about",
+            "source": null
+          },
+          "passed": true,
+          "actual": "/about/",
+          "message": "expected path=/about"
+        }
+      ],
+      "screenshot_path": "/Users/tew/Documents/qateam/output/screenshots/AUTO-002.png",
+      "error": null
+    },
+    {
+      "case": {
+        "case_id": "AUTO-003",
+        "name": "UI text inferred from code for /",
+        "path": "/",
+        "assertions": [
+          {
+            "kind": "text_present",
+            "value": "Welcome QA Team",
+            "source": {
+              "file": "/Users/tew/Documents/qateam/sample_project/src/routes.tsx",
+              "line": 16
+            }
+          },
+          {
+            "kind": "text_present",
+            "value": "Run Checks",
+            "source": {
+              "file": "/Users/tew/Documents/qateam/sample_project/src/routes.tsx",
+              "line": 17
+            }
+          }
+        ],
+        "origin": "auto"
+      },
+      "passed": true,
+      "assertion_results": [
+        {
+          "assertion": {
+            "kind": "text_present",
+            "value": "Welcome QA Team",
+            "source": {
+              "file": "/Users/tew/Documents/qateam/sample_project/src/routes.tsx",
+              "line": 16
+            }
+          },
+          "passed": true,
+          "actual": "text found",
+          "message": "must include text 'Welcome QA Team'"
+        },
+        {
+          "assertion": {
+            "kind": "text_present",
+            "value": "Run Checks",
+            "source": {
+              "file": "/Users/tew/Documents/qateam/sample_project/src/routes.tsx",
+              "line": 17
+            }
+          },
+          "passed": true,
+          "actual": "text found",
+          "message": "must include text 'Run Checks'"
+        }
+      ],
+      "screenshot_path": "/Users/tew/Documents/qateam/output/screenshots/AUTO-003.png",
+      "error": null
+    },
+    {
+      "case": {
+        "case_id": "AUTO-004",
+        "name": "UI text inferred from code for /about",
+        "path": "/about",
+        "assertions": [
+          {
+            "kind": "text_present",
+            "value": "About Product",
+            "source": {
+              "file": "/Users/tew/Documents/qateam/sample_project/src/routes.tsx",
+              "line": 25
+            }
+          },
+          {
+            "kind": "text_present",
+            "value": "Contact Support",
+            "source": {
+              "file": "/Users/tew/Documents/qateam/sample_project/src/routes.tsx",
+              "line": 26
+            }
+          }
+        ],
+        "origin": "auto"
+      },
+      "passed": false,
+      "assertion_results": [
+        {
+          "assertion": {
+            "kind": "text_present",
+            "value": "About Product",
+            "source": {
+              "file": "/Users/tew/Documents/qateam/sample_project/src/routes.tsx",
+              "line": 25
+            }
+          },
+          "passed": false,
+          "actual": "text missing",
+          "message": "must include text 'About Product'"
+        },
+        {
+          "assertion": {
+            "kind": "text_present",
+            "value": "Contact Support",
+            "source": {
+              "file": "/Users/tew/Documents/qateam/sample_project/src/routes.tsx",
+              "line": 26
+            }
+          },
+          "passed": false,
+          "actual": "text missing",
+          "message": "must include text 'Contact Support'"
+        }
+      ],
+      "screenshot_path": "/Users/tew/Documents/qateam/output/screenshots/AUTO-004.png",
+      "error": null
+    },
+    {
+      "case": {
+        "case_id": "AUTO-005",
+        "name": "Page title expectations from code",
+        "path": "/",
+        "assertions": [
+          {
+            "kind": "title_contains",
+            "value": "QA Portal",
+            "source": {
+              "file": "/Users/tew/Documents/qateam/sample_project/src/index.html",
+              "line": 5
+            }
+          }
+        ],
+        "origin": "auto"
+      },
+      "passed": true,
+      "assertion_results": [
+        {
+          "assertion": {
+            "kind": "title_contains",
+            "value": "QA Portal",
+            "source": {
+              "file": "/Users/tew/Documents/qateam/sample_project/src/index.html",
+              "line": 5
+            }
+          },
+          "passed": true,
+          "actual": "QA Portal",
+          "message": "title must include 'QA Portal'"
+        }
+      ],
+      "screenshot_path": "/Users/tew/Documents/qateam/output/screenshots/AUTO-005.png",
+      "error": null
+    },
+    {
+      "case": {
+        "case_id": "GL-001",
+        "name": "Guideline check 1",
+        "path": "/",
+        "assertions": [
+          {
+            "kind": "text_present",
+            "value": "Welcome QA Team",
+            "source": {
+              "file": "/Users/tew/Documents/qateam/guides/human_guideline.txt",
+              "line": 7
+            }
+          }
+        ],
+        "origin": "guideline"
+      },
+      "passed": true,
+      "assertion_results": [
+        {
+          "assertion": {
+            "kind": "text_present",
+            "value": "Welcome QA Team",
+            "source": {
+              "file": "/Users/tew/Documents/qateam/guides/human_guideline.txt",
+              "line": 7
+            }
+          },
+          "passed": true,
+          "actual": "text found",
+          "message": "must include text 'Welcome QA Team'"
+        }
+      ],
+      "screenshot_path": "/Users/tew/Documents/qateam/output/screenshots/GL-001.png",
+      "error": null
+    },
+    {
+      "case": {
+        "case_id": "GL-002",
+        "name": "Guideline check 2",
+        "path": "/about",
+        "assertions": [
+          {
+            "kind": "text_present",
+            "value": "About Product",
+            "source": {
+              "file": "/Users/tew/Documents/qateam/guides/human_guideline.txt",
+              "line": 8
+            }
+          }
+        ],
+        "origin": "guideline"
+      },
+      "passed": false,
+      "assertion_results": [
+        {
+          "assertion": {
+            "kind": "text_present",
+            "value": "About Product",
+            "source": {
+              "file": "/Users/tew/Documents/qateam/guides/human_guideline.txt",
+              "line": 8
+            }
+          },
+          "passed": false,
+          "actual": "text missing",
+          "message": "must include text 'About Product'"
+        }
+      ],
+      "screenshot_path": "/Users/tew/Documents/qateam/output/screenshots/GL-002.png",
+      "error": null
+    },
+    {
+      "case": {
+        "case_id": "GL-003",
+        "name": "Guideline check 3",
+        "path": "/",
+        "assertions": [
+          {
+            "kind": "title_contains",
+            "value": "QA Portal",
+            "source": {
+              "file": "/Users/tew/Documents/qateam/guides/human_guideline.txt",
+              "line": 9
+            }
+          }
+        ],
+        "origin": "guideline"
+      },
+      "passed": true,
+      "assertion_results": [
+        {
+          "assertion": {
+            "kind": "title_contains",
+            "value": "QA Portal",
+            "source": {
+              "file": "/Users/tew/Documents/qateam/guides/human_guideline.txt",
+              "line": 9
+            }
+          },
+          "passed": true,
+          "actual": "QA Portal",
+          "message": "title must include 'QA Portal'"
+        }
+      ],
+      "screenshot_path": "/Users/tew/Documents/qateam/output/screenshots/GL-003.png",
+      "error": null
+    },
+    {
+      "case": {
+        "case_id": "GL-004",
+        "name": "Guideline check 4",
+        "path": "/about",
+        "assertions": [
+          {
+            "kind": "text_absent",
+            "value": "Deprecated Banner",
+            "source": {
+              "file": "/Users/tew/Documents/qateam/guides/human_guideline.txt",
+              "line": 10
+            }
+          }
+        ],
+        "origin": "guideline"
+      },
+      "passed": false,
+      "assertion_results": [
+        {
+          "assertion": {
+            "kind": "text_absent",
+            "value": "Deprecated Banner",
+            "source": {
+              "file": "/Users/tew/Documents/qateam/guides/human_guideline.txt",
+              "line": 10
+            }
+          },
+          "passed": false,
+          "actual": "text present",
+          "message": "must not include text 'Deprecated Banner'"
+        }
+      ],
+      "screenshot_path": "/Users/tew/Documents/qateam/output/screenshots/GL-004.png",
+      "error": null
+    }
+  ],
+  "fix_tasks": [
+    {
+      "title": "AUTO-004: text_present failed",
+      "issue": "must include text 'About Product'; actual=text missing",
+      "severity": "medium",
+      "file": "/Users/tew/Documents/qateam/sample_project/src/routes.tsx",
+      "line": 25,
+      "recommendation": "Ensure expected text 'About Product' is rendered. If copy changed intentionally, update test expectations and source-of-truth text together.",
+      "test_case_id": "AUTO-004"
+    },
+    {
+      "title": "AUTO-004: text_present failed",
+      "issue": "must include text 'Contact Support'; actual=text missing",
+      "severity": "medium",
+      "file": "/Users/tew/Documents/qateam/sample_project/src/routes.tsx",
+      "line": 26,
+      "recommendation": "Ensure expected text 'Contact Support' is rendered. If copy changed intentionally, update test expectations and source-of-truth text together.",
+      "test_case_id": "AUTO-004"
+    },
+    {
+      "title": "GL-002: text_present failed",
+      "issue": "must include text 'About Product'; actual=text missing",
+      "severity": "medium",
+      "file": "/Users/tew/Documents/qateam/guides/human_guideline.txt",
+      "line": 8,
+      "recommendation": "Ensure expected text 'About Product' is rendered. If copy changed intentionally, update test expectations and source-of-truth text together.",
+      "test_case_id": "GL-002"
+    },
+    {
+      "title": "GL-004: text_absent failed",
+      "issue": "must not include text 'Deprecated Banner'; actual=text present",
+      "severity": "medium",
+      "file": "/Users/tew/Documents/qateam/guides/human_guideline.txt",
+      "line": 10,
+      "recommendation": "Remove or gate text 'Deprecated Banner' in the UI for this route.",
+      "test_case_id": "GL-004"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+# Optional human QA guideline input
+# Syntax:
+# MUST_SEE /path :: text
+# MUST_NOT_SEE /path :: text
+# TITLE /path :: title fragment
+
+MUST_SEE / :: Welcome QA Team
+MUST_SEE /about :: About Product
+TITLE / :: QA Portal
+MUST_NOT_SEE /about :: Deprecated Banner

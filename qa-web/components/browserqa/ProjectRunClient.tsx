@@ -9,6 +9,7 @@ import {
   Check,
   Code2,
   ExternalLink,
+  FileCode,
   Github,
   Globe,
   Link2,
@@ -25,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
 import { DetailLoadingState } from "@/components/browserqa/LoadingStates";
 import {
   fallbackRouteDescription,
@@ -284,9 +286,9 @@ function RouteTreeView({
 // persisted via run-store once scan completes)
 // ------------------------------------------------------------------
 
-type Props = { projectId: string };
+type Props = { projectId: string; initialRunId?: string };
 
-export function ProjectRunClient({ projectId }: Props) {
+export function ProjectRunClient({ projectId, initialRunId }: Props) {
   const router = useRouter();
   const [project, setProject] = useState<ProjectConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -336,8 +338,23 @@ export function ProjectRunClient({ projectId }: Props) {
 
   useEffect(() => {
     setProject(getProjectById(projectId));
-    setLoading(false);
-  }, [projectId]);
+    if (initialRunId) {
+      fetch(`/api/projects/${projectId}/runs/${initialRunId}`, {
+        cache: "no-store",
+      })
+        .then(async (res) => {
+          if (!res.ok) return;
+          const snapshot = (await res.json()) as RunSnapshotResponse;
+          replaceWithSnapshotIssues(snapshot);
+        })
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    } else {
+      setLoading(false);
+    }
+    // replaceWithSnapshotIssues is stable (useCallback with no deps)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, initialRunId]);
 
   const clearIssues = () => setIssues([]);
 
@@ -652,7 +669,7 @@ export function ProjectRunClient({ projectId }: Props) {
             } catch {
               // keep polling while scan request is still active
             }
-            await new Promise((resolve) => setTimeout(resolve, 2500));
+            await new Promise((resolve) => setTimeout(resolve, 1500));
           }
         })();
 
@@ -853,6 +870,38 @@ export function ProjectRunClient({ projectId }: Props) {
   // ------------------------------------------------------------------
   // Render
   // ------------------------------------------------------------------
+
+  // Group issues by file path, sorted P0-first then alphabetically
+  const issuesByFile = useMemo(() => {
+    const map = new Map<string, IssueCard[]>();
+    for (const issue of issues) {
+      const file = getIssueFile(issue);
+      const arr = map.get(file) ?? [];
+      arr.push(issue);
+      map.set(file, arr);
+    }
+    const priorityOrder: Record<IssueCard["priority"], number> = {
+      P0: 0,
+      P1: 1,
+      P2: 2,
+    };
+    for (const arr of map.values()) {
+      arr.sort(
+        (a, b) =>
+          (priorityOrder[a.priority] ?? 3) - (priorityOrder[b.priority] ?? 3),
+      );
+    }
+    return [...map.entries()].sort(([pathA, issuesA], [pathB, issuesB]) => {
+      const topA = Math.min(
+        ...issuesA.map((i) => priorityOrder[i.priority] ?? 3),
+      );
+      const topB = Math.min(
+        ...issuesB.map((i) => priorityOrder[i.priority] ?? 3),
+      );
+      if (topA !== topB) return topA - topB;
+      return pathA.localeCompare(pathB);
+    });
+  }, [issues]);
 
   if (loading) return <DetailLoadingState label="Loading project…" />;
 
@@ -1302,14 +1351,102 @@ export function ProjectRunClient({ projectId }: Props) {
                 </p>
               </div>
             ) : (
-              <div className="columns-1 gap-4 sm:columns-2 xl:columns-3">
-                {issues.map((issue) => (
-                  <IssueCardItem key={issue.id} issue={issue} />
+              <div className="space-y-6">
+                {issuesByFile.map(([file, fileIssues]) => (
+                  <FileIssueGroup
+                    key={file || "__nofile"}
+                    file={file}
+                    issues={fileIssues}
+                  />
                 ))}
+                {scanning && <IssueCardSkeleton />}
               </div>
             )}
           </div>
         </ScrollArea>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------
+// Issue file helpers
+// ------------------------------------------------------------------
+
+function getIssueFile(issue: IssueCard): string {
+  if (issue.filePath) return issue.filePath;
+  if (issue.cardJson?.problem && typeof issue.cardJson.problem === "object") {
+    const evidence = (issue.cardJson.problem as { evidence?: unknown[] })
+      .evidence;
+    if (Array.isArray(evidence) && evidence.length > 0) {
+      const first = evidence[0] as { path?: unknown };
+      if (typeof first.path === "string" && first.path) return first.path;
+    }
+  }
+  return "";
+}
+
+function FileIssueGroup({
+  file,
+  issues,
+}: {
+  file: string;
+  issues: IssueCard[];
+}) {
+  const p0Count = issues.filter((i) => i.priority === "P0").length;
+  const p1Count = issues.filter((i) => i.priority === "P1").length;
+
+  return (
+    <div>
+      {/* File path header */}
+      <div className="mb-2.5 flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900/50 px-3 py-2">
+        <FileCode className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-slate-300">
+          {file || "No file association"}
+        </span>
+        <span className="shrink-0 text-[11px] text-slate-500">
+          {issues.length} issue{issues.length !== 1 ? "s" : ""}
+        </span>
+        {p0Count > 0 ? (
+          <span className="shrink-0 rounded-full border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-red-300">
+            {p0Count} P0
+          </span>
+        ) : p1Count > 0 ? (
+          <span className="shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
+            {p1Count} P1
+          </span>
+        ) : null}
+      </div>
+      {/* Issue cards for this file */}
+      <div className="space-y-3 pl-2">
+        {issues.map((issue) => (
+          <IssueCardItem key={issue.id} issue={issue} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function IssueCardSkeleton() {
+  return (
+    <div>
+      <div className="mb-2.5 flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900/50 px-3 py-2">
+        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-emerald-400" />
+        <Skeleton className="h-3 w-48 bg-slate-800" />
+        <span className="shrink-0 text-[11px] text-slate-500">analyzing…</span>
+      </div>
+      <div className="space-y-3 pl-2">
+        <Card className="border border-slate-700/40 bg-slate-900/40">
+          <CardContent className="space-y-3 p-4">
+            <div className="flex items-center gap-2">
+              <Skeleton className="h-5 w-20 rounded-full bg-slate-800" />
+              <Skeleton className="h-5 w-16 rounded-full bg-slate-800" />
+            </div>
+            <Skeleton className="h-4 w-3/4 bg-slate-800" />
+            <Skeleton className="h-3 w-1/3 bg-slate-800" />
+            <Skeleton className="h-12 w-full bg-slate-800" />
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

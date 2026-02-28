@@ -10,6 +10,11 @@ type RuleRow = {
   priority: string;
   description: string;
   contents: Record<string, unknown>;
+  targets: string[];
+  signals: string[];
+  skill_tags: string[];
+  version: string;
+  lesson_enabled: boolean;
   enabled: boolean;
 };
 
@@ -29,6 +34,19 @@ type RuleInput = {
   howToDetect: string;
   pass: string;
   fail: string;
+};
+
+type RuleEducation = {
+  why_it_matters: string;
+  rule_of_thumb: string;
+  common_pitfalls: string[];
+};
+
+type RuleRemediation = {
+  recommended_pattern?: string;
+  recommended_envelope?: Record<string, unknown>;
+  implementation_steps: string[];
+  acceptance_criteria: string[];
 };
 
 function loadDotEnvLocal(): void {
@@ -65,15 +83,328 @@ function defaultPriority(category: string, critical?: boolean): string {
   return "P2";
 }
 
+function uniq(items: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    const value = item.trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+function inferTargets(input: RuleInput): string[] {
+  const scope = input.scope.toLowerCase();
+  const baseRouteTargets = [
+    "app/api/**/route.ts",
+    "app/api/**/*.ts",
+    "pages/api/**/*.ts",
+    "src/app/api/**/route.ts",
+    "src/pages/api/**/*.ts",
+    "server/**/*.ts",
+  ];
+
+  const structuralTargets = [
+    "src/**/*.ts",
+    "server/**/*.ts",
+    "app/**/*.ts",
+    "pages/**/*.ts",
+    "middleware/**/*.ts",
+    "**/middleware.ts",
+    "**/middleware.js",
+    "**/middleware.mjs",
+    "**/package.json",
+  ];
+
+  if (scope.includes("package.json") || scope.includes("dependencies")) {
+    return ["package.json", "**/package.json"];
+  }
+
+  if (scope.includes("dto") || scope.includes("schema") || scope.includes("validator")) {
+    return uniq([
+      ...baseRouteTargets,
+      "**/dto/**/*.ts",
+      "**/schema/**/*.ts",
+      "**/schemas/**/*.ts",
+      "**/validator/**/*.ts",
+      "**/validators/**/*.ts",
+    ]);
+  }
+
+  if (scope.includes("middleware") || scope.includes("guard") || scope.includes("bootstrap")) {
+    return uniq([
+      ...baseRouteTargets,
+      "middleware/**/*.ts",
+      "**/middleware.ts",
+      "**/middleware.js",
+      "**/middleware.mjs",
+      "**/guards/**/*.ts",
+      "**/interceptors/**/*.ts",
+      "**/src/main.ts",
+    ]);
+  }
+
+  if (scope.includes("logger")) {
+    return uniq([
+      ...baseRouteTargets,
+      "**/logger/**/*.ts",
+      "**/lib/logger.ts",
+      "middleware/**/*.ts",
+    ]);
+  }
+
+  if (input.category === "SCAN_SCOPE" || input.category === "QUALITY_GATE") {
+    return ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.mjs", "package.json"];
+  }
+
+  if (input.category === "STRUCTURAL" || input.category === "STRUCTURAL_EXPECTED") {
+    return structuralTargets;
+  }
+
+  return baseRouteTargets;
+}
+
+function inferSignals(input: RuleInput): string[] {
+  const byCategory: Record<string, string[]> = {
+    APC: ["NextResponse.json(", "res.status(", "res.json(", "Allow", "Problem Details"],
+    VAL: ["zod", "joi", "yup", "safeParse(", "ValidationPipe", "schema.parse("],
+    AUT: ["getServerSession(", "jwt.verify(", "Authorization", "session", "role", "permission"],
+    RLM: ["rateLimit(", "@upstash/ratelimit", "Retry-After", "X-RateLimit-", "throttler"],
+    IDP: ["Idempotency-Key", "x-idempotency-key", "idempotency", "replay", "409"],
+    TMO: ["AbortController", "timeout", "maxTimeMS", "statement_timeout", "retry", "backoff"],
+    LOG: ["requestId", "traceId", "logger.", "pino", "winston", "morgan"],
+    PAG: ["limit", "offset", "cursor", "pageSize", "hasNextPage", "totalPages"],
+    SECAPI: ["cors(", "Access-Control-Allow-Origin", "Cache-Control", "no-store", "fetch(", "URL("],
+    STRUCTURAL: ["middleware", "guard", "module", "bootstrap", "infrastructure"],
+    STRUCTURAL_EXPECTED: ["middleware", "guard", "module", "lib/", "shared"],
+    SCAN_SCOPE: ["node_modules", "dist", ".next", "*.test.ts", "*.spec.ts", "static analysis"],
+    QUALITY_GATE: ["coverage", "violation", "summary", "stack_detected", "unparseable"],
+  };
+
+  const combinedText = `${input.howToDetect} ${input.pass} ${input.fail}`;
+  const callSeeds = Array.from(
+    new Set(combinedText.match(/\b[A-Za-z_][A-Za-z0-9_.]{2,}\(/g) ?? []),
+  ).slice(0, 8);
+
+  return uniq([...(byCategory[input.category] ?? []), ...callSeeds]);
+}
+
+function inferSkillTags(input: RuleInput): string[] {
+  const byCategory: Record<string, string[]> = {
+    APC: ["api-contracts", "http-semantics"],
+    VAL: ["input-validation", "schema-design"],
+    AUT: ["authentication", "authorization"],
+    RLM: ["rate-limiting", "abuse-prevention"],
+    IDP: ["idempotency", "consistency"],
+    TMO: ["timeouts-retries", "resilience"],
+    LOG: ["observability", "audit-logging"],
+    PAG: ["pagination", "query-safety"],
+    SECAPI: ["api-security", "transport-security"],
+    STRUCTURAL: ["architecture", "security-baseline"],
+    STRUCTURAL_EXPECTED: ["infrastructure-readiness", "architecture"],
+    SCAN_SCOPE: ["scanner-scope", "static-analysis"],
+    QUALITY_GATE: ["quality-gates", "audit-integrity"],
+  };
+  return byCategory[input.category] ?? ["secure-coding"];
+}
+
+function inferEducation(input: RuleInput): RuleEducation {
+  const defaults = {
+    why_it_matters:
+      "This control prevents silent regressions that degrade reliability and security over time.",
+    rule_of_thumb:
+      "Treat the pass criteria as the default contract and block changes that violate it.",
+    common_pitfalls: [
+      "Implementing the check in one endpoint but not shared handlers.",
+      "Relying on conventions without automated verification.",
+      "Fixing symptoms while leaving the root contract undefined.",
+    ],
+  } satisfies RuleEducation;
+
+  const templates: Record<string, RuleEducation> = {
+    APC: {
+      why_it_matters:
+        "Predictable API contracts reduce integration bugs and make failures diagnosable. Inconsistent envelopes and status codes cause client-side retry, parsing, and caching errors.",
+      rule_of_thumb:
+        "Use one documented response contract and map each outcome to the correct HTTP status every time.",
+      common_pitfalls: [
+        "Returning 200 for error states because exceptions are swallowed.",
+        "Letting each handler define a bespoke error payload.",
+        "Forgetting to include `Allow`/negotiation behavior for unsupported methods.",
+        "Mixing framework defaults with custom contracts without normalization.",
+      ],
+    },
+    VAL: {
+      why_it_matters:
+        "Input validation blocks malformed and malicious data before it reaches persistence or side effects. Early validation failures are cheaper to detect and safer to recover from.",
+      rule_of_thumb:
+        "Validate and coerce every external input at the boundary before business logic runs.",
+      common_pitfalls: [
+        "Validating only body payloads while leaving query/path params unchecked.",
+        "Accepting unknown fields that trigger mass-assignment issues.",
+        "Returning generic validation messages with no field context.",
+        "Using runtime type assertions without hard schema enforcement.",
+      ],
+    },
+    AUT: {
+      why_it_matters:
+        "Authentication and authorization controls prevent unauthorized data access and privilege abuse. Missing one check can expose every downstream resource under that route.",
+      rule_of_thumb:
+        "Authenticate first, authorize every resource access, and never trust client-provided identity claims.",
+      common_pitfalls: [
+        "Checking authentication at route entry but skipping ownership checks.",
+        "Using token decode-only flows instead of cryptographic verification.",
+        "Returning sensitive fields from ORM defaults.",
+        "Applying role checks inconsistently across nested/list endpoints.",
+      ],
+    },
+    RLM: {
+      why_it_matters:
+        "Rate limiting reduces brute-force and abuse risk while preserving service availability. Weak limiter strategy turns auth endpoints into low-cost attack surfaces.",
+      rule_of_thumb:
+        "Protect sensitive endpoints with persistent, identity-aware limits and deterministic 429 behavior.",
+      common_pitfalls: [
+        "Using process memory stores that reset on deploy or scale-out.",
+        "Applying one global limit without auth-route hardening.",
+        "Omitting retry metadata so clients cannot back off correctly.",
+        "Choosing limiter keys that attackers can easily rotate around.",
+      ],
+    },
+    IDP: {
+      why_it_matters:
+        "Idempotency prevents duplicate state changes caused by retries, network flakiness, and race conditions. Financial and booking flows are especially sensitive to duplicate execution.",
+      rule_of_thumb:
+        "For mutation endpoints, treat repeated requests with the same key as one logical operation.",
+      common_pitfalls: [
+        "Reading idempotency keys without persisting replay results.",
+        "Scoping uniqueness too broadly or too narrowly.",
+        "Skipping TTL and creating unbounded key stores.",
+        "Reprocessing duplicate keys instead of replaying the original response.",
+      ],
+    },
+    TMO: {
+      why_it_matters:
+        "Timeout and retry policy controls tail latency and prevents cascading failures across dependencies. Without bounds, one slow upstream can exhaust worker capacity.",
+      rule_of_thumb:
+        "Set explicit timeouts, cap retries, and use jittered backoff only for idempotent-safe operations.",
+      common_pitfalls: [
+        "Calling external services without timeout signals.",
+        "Retrying non-idempotent writes without safeguards.",
+        "Using fixed retry delays that create retry storms.",
+        "Leaving DB statement timeout behavior undefined.",
+      ],
+    },
+    LOG: {
+      why_it_matters:
+        "Structured logs with correlation identifiers are essential for incident response and forensic traceability. Missing context slows detection and increases mean time to recovery.",
+      rule_of_thumb:
+        "Log every failure path with request context while redacting secrets and PII.",
+      common_pitfalls: [
+        "Swallowing errors inside catch blocks.",
+        "Using console logs without structured fields.",
+        "Skipping request IDs across async boundaries.",
+        "Logging sensitive credentials in cleartext.",
+      ],
+    },
+    PAG: {
+      why_it_matters:
+        "Pagination guardrails prevent unbounded reads that can degrade database performance and expose excess data. Predictable pagination metadata improves client behavior and user experience.",
+      rule_of_thumb:
+        "Enforce bounded, validated pagination inputs and return deterministic page metadata.",
+      common_pitfalls: [
+        "Allowing arbitrary user-provided limits.",
+        "Returning raw cursors that expose internal identifiers.",
+        "Omitting total/hasNext metadata needed for client loops.",
+        "Building sort/filter clauses directly from user input.",
+      ],
+    },
+    SECAPI: {
+      why_it_matters:
+        "API security headers and transport controls reduce exploitability in browser and server-to-server interactions. Misconfigured CORS and SSRF paths are frequent high-impact findings.",
+      rule_of_thumb:
+        "Default to deny: allowlist trusted origins/hosts and explicitly harden sensitive response behavior.",
+      common_pitfalls: [
+        "Combining wildcard CORS origins with credentials.",
+        "Allowing server-side URL fetches to private networks.",
+        "Omitting no-store on token or sensitive responses.",
+        "Passing bearer secrets in query strings.",
+      ],
+    },
+  };
+
+  return templates[input.category] ?? defaults;
+}
+
+function inferRemediation(input: RuleInput): RuleRemediation {
+  const steps = [
+    `Identify in-scope files (${input.scope}) and mark all current violations of ${input.id}.`,
+    `Implement a shared pattern that satisfies the pass criteria: ${input.pass}`,
+    "Add regression tests (positive + negative) for representative endpoints and shared helpers.",
+    "Run static checks and endpoint tests to verify behavior is consistently enforced.",
+  ];
+
+  const acceptance = [
+    `Pass criteria met: ${input.pass}`,
+    `Fail condition removed: ${input.fail}`,
+    "Automated tests cover both compliant and non-compliant cases.",
+  ];
+
+  if (input.id === "APC-01") {
+    return {
+      recommended_envelope: {
+        success: true,
+        data: {},
+        error: null,
+        meta: { requestId: "string", timestamp: "ISO-8601" },
+      },
+      implementation_steps: steps,
+      acceptance_criteria: acceptance,
+    };
+  }
+
+  return {
+    recommended_pattern: `Enforce ${input.title.toLowerCase()} as a shared, test-covered default contract.`,
+    implementation_steps: steps,
+    acceptance_criteria: acceptance,
+  };
+}
+
+function ruleVersion(input: RuleInput): string {
+  return input.specVersion ?? "server-api-audit-v2.0";
+}
+
+function lessonEnabled(input: RuleInput): boolean {
+  const kind = input.ruleKind ?? "check";
+  if (["scan_scope", "quality_gate", "constraint", "expected_infrastructure"].includes(kind)) {
+    return false;
+  }
+  return true;
+}
+
 function toRule(input: RuleInput): RuleRow {
+  const version = ruleVersion(input);
+  const targets = inferTargets(input);
+  const signals = inferSignals(input);
+  const skillTags = inferSkillTags(input);
+  const education = inferEducation(input);
+  const remediation = inferRemediation(input);
+
   return {
     id: input.id,
     title: input.title,
     category: input.category,
     priority: input.priority ?? defaultPriority(input.category, input.critical),
     description: input.howToDetect,
+    targets,
+    signals,
+    skill_tags: skillTags,
+    version,
+    lesson_enabled: lessonEnabled(input),
     contents: {
-      spec: input.specVersion ?? "server-api-audit-v1.0",
+      spec: version,
+      version,
       scoring_included: false,
       critical: Boolean(input.critical),
       source_section: input.sourceSection ?? null,
@@ -85,6 +416,11 @@ function toRule(input: RuleInput): RuleRow {
       standard_refs: input.standardRefs ?? [],
       supersedes: input.supersedes ?? [],
       overlaps_with: input.overlapsWith ?? [],
+      targets,
+      signals,
+      skill_tags: skillTags,
+      education,
+      remediation,
     },
     enabled: true,
   };
@@ -1343,6 +1679,11 @@ async function main(): Promise<void> {
     if (/relation .* does not exist|Could not find the table/i.test(error.message)) {
       throw new Error(
         "Table `rules` is missing. Apply migration qa-web/supabase/migrations/20260228_rules_table.sql first.",
+      );
+    }
+    if (/column .* does not exist/i.test(error.message)) {
+      throw new Error(
+        "Rules columns are outdated. Apply migration qa-web/supabase/migrations/20260301_rules_learning_fields.sql first.",
       );
     }
     throw new Error(error.message);

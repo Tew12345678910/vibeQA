@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ArrowLeft,
-  ChevronDown,
   ChevronRight,
   Clock,
   ExternalLink,
@@ -18,9 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { DetailLoadingState } from "@/components/browserqa/LoadingStates";
-import {
-  getProjectById,
-} from "@/lib/browserqa/project-store";
+import { getProjectById } from "@/lib/browserqa/project-store";
 import { loadRuns, type RunRecord } from "@/lib/browserqa/run-store";
 import { type RunMetadata } from "@/lib/browserqa/project-analysis";
 
@@ -234,7 +231,7 @@ export function ProjectDetailClient({ projectId }: Props) {
         ) : (
           <div className="flex flex-col gap-3">
             {runs.map((run) => (
-              <RunCard key={run.id} run={run} />
+              <RunCard key={run.id} run={run} projectId={projectId} />
             ))}
           </div>
         )}
@@ -271,23 +268,21 @@ function StatCard({
   );
 }
 
-function RunCard({ run }: { run: RunRecord }) {
-  const [expanded, setExpanded] = useState(false);
+function RunCard({ run, projectId }: { run: RunRecord; projectId: string }) {
+  const router = useRouter();
 
   return (
     <Card className="border-slate-800 bg-slate-900/60">
       <CardContent className="p-0">
         <button
           type="button"
-          onClick={() => setExpanded((v) => !v)}
+          onClick={() =>
+            router.push(`/projects/${projectId}/run?runId=${run.id}`)
+          }
           className="flex w-full items-center justify-between rounded-xl px-5 py-4 text-left transition-colors hover:bg-slate-800/40"
         >
           <div className="flex items-center gap-4">
-            {expanded ? (
-              <ChevronDown className="h-4 w-4 shrink-0 text-slate-500" />
-            ) : (
-              <ChevronRight className="h-4 w-4 shrink-0 text-slate-500" />
-            )}
+            <ChevronRight className="h-4 w-4 shrink-0 text-slate-500" />
             <div>
               <p className="text-sm font-medium text-slate-100">
                 {new Date(run.createdAt).toLocaleString("en-US", {
@@ -323,34 +318,6 @@ function RunCard({ run }: { run: RunRecord }) {
             })}
           </div>
         </button>
-
-        {expanded && run.issues.length > 0 ? (
-          <div className="space-y-2 border-t border-slate-800 px-5 py-3">
-            {run.issues.map((issue) => (
-              <div
-                key={issue.id}
-                className="flex items-start gap-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3"
-              >
-                <span
-                  className={`mt-0.5 shrink-0 rounded-full border px-2 py-0.5 text-xs font-semibold ${priorityColors[issue.priority]}`}
-                >
-                  {issue.priority}
-                </span>
-                <div>
-                  <p className="text-sm text-slate-200">{issue.title}</p>
-                  {issue.description ? (
-                    <p className="mt-0.5 text-xs text-slate-500">
-                      {issue.description}
-                    </p>
-                  ) : null}
-                  <p className="mt-1 text-xs capitalize text-slate-600">
-                    {issue.category} · {issue.source}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : null}
       </CardContent>
     </Card>
   );

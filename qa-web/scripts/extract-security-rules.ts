@@ -10,6 +10,11 @@ type RuleRow = {
   priority: string;
   description: string;
   contents: Record<string, unknown>;
+  targets: string[];
+  signals: string[];
+  skill_tags: string[];
+  version: string;
+  lesson_enabled: boolean;
   enabled: boolean;
 };
 
@@ -173,6 +178,114 @@ function priorityFromFindingType(type: string): string {
   return "P3";
 }
 
+function uniq(items: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    const value = item.trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+function targetsForCategory(category: string): string[] {
+  if (category === "xss_vulnerability") {
+    return ["app/**/*.tsx", "pages/**/*.tsx", "src/**/*.tsx", "components/**/*.tsx"];
+  }
+  if (category === "sql_injection") {
+    return ["app/api/**/route.ts", "pages/api/**/*.ts", "src/**/*.ts", "server/**/*.ts"];
+  }
+  if (category === "secret_leak") {
+    return ["**/*.env*", "**/*.ts", "**/*.js", "**/*.json", "**/*.log"];
+  }
+  return ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.json"];
+}
+
+function signalsForCategory(category: string): string[] {
+  const byCategory: Record<string, string[]> = {
+    secret_leak: ["process.env", "api_key", "token", "secret", "Bearer "],
+    pii_exposure: ["email", "phone", "ssn", "credit card", "dob", "log"],
+    xss_vulnerability: ["dangerouslySetInnerHTML", "<script", "innerHTML", "onerror="],
+    sql_injection: ["SELECT", "UNION", "$queryRaw", "query(", "execute("],
+    insecure_dependency: ["dependency", "CVE", "audit"],
+    insecure_header: ["Content-Security-Policy", "Strict-Transport-Security", "X-Frame-Options"],
+    csrf_missing: ["csrf", "sameSite", "origin", "referer", "token"],
+  };
+  return byCategory[category] ?? ["security"];
+}
+
+function skillTagsForCategory(category: string): string[] {
+  const byCategory: Record<string, string[]> = {
+    secret_leak: ["secrets-management", "credential-hygiene"],
+    pii_exposure: ["privacy", "data-protection"],
+    xss_vulnerability: ["xss-prevention", "output-encoding"],
+    sql_injection: ["sql-injection", "query-parameterization"],
+    insecure_dependency: ["dependency-security", "supply-chain"],
+    insecure_header: ["http-security-headers", "browser-hardening"],
+    csrf_missing: ["csrf-protection", "session-security"],
+  };
+  return byCategory[category] ?? ["secure-coding"];
+}
+
+function enrichRuleRow(
+  row: Omit<RuleRow, "targets" | "signals" | "skill_tags" | "version" | "lesson_enabled">,
+  options?: { lessonEnabled?: boolean },
+): RuleRow {
+  const targets = targetsForCategory(row.category);
+  const signals = uniq([
+    ...signalsForCategory(row.category),
+    typeof row.contents.regex === "string" ? String(row.contents.regex).slice(0, 120) : "",
+    typeof row.contents.payload === "string" ? String(row.contents.payload).slice(0, 120) : "",
+  ]);
+  const skillTags = skillTagsForCategory(row.category);
+  const version = "security-rule-spec/v2.0";
+  const lessonEnabled = options?.lessonEnabled ?? true;
+
+  return {
+    ...row,
+    targets,
+    signals,
+    skill_tags: skillTags,
+    version,
+    lesson_enabled: lessonEnabled,
+    contents: {
+      ...row.contents,
+      version,
+      targets,
+      signals,
+      skill_tags: skillTags,
+      education: {
+        why_it_matters:
+          "Security findings are easiest to prevent when guidance is attached to each rule during retrieval.",
+        rule_of_thumb:
+          "Treat this rule as a default secure coding contract and verify it in tests.",
+        common_pitfalls: [
+          "Applying fixes in one file while leaving parallel paths vulnerable.",
+          "Relying on manual reviews without automated checks.",
+          "Skipping regression tests for known payloads and patterns.",
+        ],
+      },
+      remediation: {
+        recommended_pattern:
+          "Implement shared security controls and enforce them uniformly across in-scope files.",
+        implementation_steps: [
+          "Identify all in-scope files and current violations.",
+          "Apply the secure pattern in shared code or middleware.",
+          "Add positive and negative tests.",
+          "Re-run scanner checks and confirm findings are resolved.",
+        ],
+        acceptance_criteria: [
+          "All in-scope code paths follow the recommended secure pattern.",
+          "Known insecure inputs are rejected, sanitized, or blocked.",
+          "Automated checks pass with no reintroduced violations.",
+        ],
+      },
+    },
+  };
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return value as Record<string, unknown>;
@@ -198,11 +311,14 @@ function toSql(rows: RuleRow[]): string {
   const values = rows
     .map((row) => {
       const contents = JSON.stringify(row.contents);
-      return `(${sqlEscape(row.id)}, ${sqlEscape(row.title)}, ${sqlEscape(row.category)}, ${sqlEscape(row.priority)}, ${sqlEscape(row.description)}, ${sqlEscape(contents)}::jsonb, ${row.enabled ? "true" : "false"})`;
+      const targets = `ARRAY[${row.targets.map(sqlEscape).join(", ")}]::text[]`;
+      const signals = `ARRAY[${row.signals.map(sqlEscape).join(", ")}]::text[]`;
+      const skillTags = `ARRAY[${row.skill_tags.map(sqlEscape).join(", ")}]::text[]`;
+      return `(${sqlEscape(row.id)}, ${sqlEscape(row.title)}, ${sqlEscape(row.category)}, ${sqlEscape(row.priority)}, ${sqlEscape(row.description)}, ${sqlEscape(contents)}::jsonb, ${targets}, ${signals}, ${skillTags}, ${sqlEscape(row.version)}, ${row.lesson_enabled ? "true" : "false"}, ${row.enabled ? "true" : "false"})`;
     })
     .join(",\n");
 
-  return `INSERT INTO public.rules (id, title, category, priority, description, contents, enabled)\nVALUES\n${values}\nON CONFLICT (id) DO UPDATE SET\n  title = EXCLUDED.title,\n  category = EXCLUDED.category,\n  priority = EXCLUDED.priority,\n  description = EXCLUDED.description,\n  contents = EXCLUDED.contents,\n  enabled = EXCLUDED.enabled;\n`;
+  return `INSERT INTO public.rules (id, title, category, priority, description, contents, targets, signals, skill_tags, version, lesson_enabled, enabled)\nVALUES\n${values}\nON CONFLICT (id) DO UPDATE SET\n  title = EXCLUDED.title,\n  category = EXCLUDED.category,\n  priority = EXCLUDED.priority,\n  description = EXCLUDED.description,\n  contents = EXCLUDED.contents,\n  targets = EXCLUDED.targets,\n  signals = EXCLUDED.signals,\n  skill_tags = EXCLUDED.skill_tags,\n  version = EXCLUDED.version,\n  lesson_enabled = EXCLUDED.lesson_enabled,\n  enabled = EXCLUDED.enabled;\n`;
 }
 
 function buildRules(sourcePath: string, rawTs: string): RuleRow[] {
@@ -220,89 +336,114 @@ function buildRules(sourcePath: string, rawTs: string): RuleRow[] {
     const r = asRecord(item);
     const label = String(r.label ?? "Secret pattern");
     const severity = String(r.severity ?? "high");
-    rules.push({
-      id: idAt(rules.length + 1),
-      title: `${label} detection rule`,
-      category: "secret_leak",
-      priority: priorityFromSeverity(severity),
-      description: `Detects possible ${label.toLowerCase()} exposure in source content.`,
-      contents: {
-        source: "SECRET_PATTERNS",
-        ...r,
-      },
-      enabled: true,
-    });
+    rules.push(
+      enrichRuleRow({
+        id: idAt(rules.length + 1),
+        title: `${label} detection rule`,
+        category: "secret_leak",
+        priority: priorityFromSeverity(severity),
+        description: `Detects possible ${label.toLowerCase()} exposure in source content.`,
+        contents: {
+          source: "SECRET_PATTERNS",
+          ...r,
+        },
+        enabled: true,
+      }),
+    );
   }
 
   for (const item of piiPatterns) {
     const r = asRecord(item);
     const label = String(r.label ?? "PII pattern");
     const severity = String(r.severity ?? "medium");
-    rules.push({
-      id: idAt(rules.length + 1),
-      title: `${label} detection rule`,
-      category: "pii_exposure",
-      priority: priorityFromSeverity(severity),
-      description: `Detects possible ${label.toLowerCase()} exposure in source content.`,
-      contents: {
-        source: "PII_PATTERNS",
-        ...r,
-      },
-      enabled: true,
-    });
+    rules.push(
+      enrichRuleRow({
+        id: idAt(rules.length + 1),
+        title: `${label} detection rule`,
+        category: "pii_exposure",
+        priority: priorityFromSeverity(severity),
+        description: `Detects possible ${label.toLowerCase()} exposure in source content.`,
+        contents: {
+          source: "PII_PATTERNS",
+          ...r,
+        },
+        enabled: true,
+      }),
+    );
   }
 
   xssPayloads.forEach((payload, idx) => {
     const value = String(payload ?? "");
-    rules.push({
-      id: idAt(rules.length + 1),
-      title: `XSS test payload ${idx + 1}`,
-      category: "xss_vulnerability",
-      priority: "P2",
-      description: "Synthetic payload used for cross-site scripting detection and validation.",
-      contents: {
-        source: "XSS_TEST_PAYLOADS",
-        index: idx,
-        payload: value,
-      },
-      enabled: true,
-    });
+    rules.push(
+      enrichRuleRow(
+        {
+          id: idAt(rules.length + 1),
+          title: `XSS test payload ${idx + 1}`,
+          category: "xss_vulnerability",
+          priority: "P2",
+          description: "Synthetic payload used for cross-site scripting detection and validation.",
+          contents: {
+            source: "XSS_TEST_PAYLOADS",
+            index: idx,
+            payload: value,
+          },
+          enabled: true,
+        },
+        { lessonEnabled: false },
+      ),
+    );
   });
 
   sqliPayloads.forEach((payload, idx) => {
     const value = String(payload ?? "");
-    rules.push({
-      id: idAt(rules.length + 1),
-      title: `SQL injection test payload ${idx + 1}`,
-      category: "sql_injection",
-      priority: "P2",
-      description: "Synthetic payload used for SQL injection detection and validation.",
-      contents: {
-        source: "SQLI_TEST_PAYLOADS",
-        index: idx,
-        payload: value,
-      },
-      enabled: true,
-    });
+    rules.push(
+      enrichRuleRow(
+        {
+          id: idAt(rules.length + 1),
+          title: `SQL injection test payload ${idx + 1}`,
+          category: "sql_injection",
+          priority: "P2",
+          description: "Synthetic payload used for SQL injection detection and validation.",
+          contents: {
+            source: "SQLI_TEST_PAYLOADS",
+            index: idx,
+            payload: value,
+          },
+          enabled: true,
+        },
+        { lessonEnabled: false },
+      ),
+    );
   });
 
   Object.entries(education).forEach(([findingType, value]) => {
     const r = asRecord(value);
     const title = String(r.title ?? `${findingType} guidance`);
     const explanation = String(r.explanation ?? "Security education guidance.");
-    rules.push({
-      id: idAt(rules.length + 1),
-      title: `${title} educational rule`,
-      category: findingType,
-      priority: priorityFromFindingType(findingType),
-      description: explanation,
-      contents: {
-        source: "EDUCATION_CONTENT",
-        findingType,
-        ...r,
-      },
-      enabled: true,
-    });
+    rules.push(
+      enrichRuleRow({
+        id: idAt(rules.length + 1),
+        title: `${title} educational rule`,
+        category: findingType,
+        priority: priorityFromFindingType(findingType),
+        description: explanation,
+        contents: {
+          source: "EDUCATION_CONTENT",
+          findingType,
+          ...r,
+          education: {
+            why_it_matters: String(r.impact ?? explanation),
+            rule_of_thumb: String(r.remediation ?? "Apply secure defaults and validate with tests."),
+            common_pitfalls: [
+              "Treating this issue as informational only.",
+              "Fixing one location while similar paths remain exposed.",
+              "Skipping automated regression coverage.",
+            ],
+          },
+        },
+        enabled: true,
+      }),
+    );
   });
 
   return rules;

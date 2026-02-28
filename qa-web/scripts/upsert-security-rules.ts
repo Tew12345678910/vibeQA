@@ -12,6 +12,11 @@ type RuleRow = {
   priority: string;
   description: string;
   contents: Record<string, unknown>;
+  targets: string[];
+  signals: string[];
+  skill_tags: string[];
+  version: string;
+  lesson_enabled: boolean;
   enabled: boolean;
 };
 
@@ -79,6 +84,249 @@ function priorityFromType(type: string): string {
   if (type === "insecure_header") return "P2";
   if (type === "csrf_missing") return "P2";
   return "P3";
+}
+
+function uniq(items: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    const value = item.trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+function targetsForCategory(category: string): string[] {
+  if (category === "secret_leak") {
+    return [
+      "**/*.env*",
+      "**/config/**/*.ts",
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.mjs",
+      "**/*.json",
+      "**/*.log",
+    ];
+  }
+
+  if (category === "pii_exposure") {
+    return ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.json", "**/*.log"];
+  }
+
+  if (category === "xss_vulnerability") {
+    return [
+      "app/**/*.tsx",
+      "pages/**/*.tsx",
+      "src/**/*.tsx",
+      "components/**/*.tsx",
+      "app/api/**/route.ts",
+      "pages/api/**/*.ts",
+    ];
+  }
+
+  if (category === "sql_injection") {
+    return [
+      "app/api/**/route.ts",
+      "pages/api/**/*.ts",
+      "src/app/api/**/route.ts",
+      "src/pages/api/**/*.ts",
+      "server/**/*.ts",
+      "lib/**/*.ts",
+    ];
+  }
+
+  return ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.mjs", "**/*.json"];
+}
+
+function signalsForCategory(category: string): string[] {
+  const byCategory: Record<string, string[]> = {
+    secret_leak: ["process.env", "Authorization", "Bearer ", "api_key", "secret", "token"],
+    pii_exposure: ["email", "phone", "ssn", "credit card", "dob", "address", "log"],
+    xss_vulnerability: ["dangerouslySetInnerHTML", "<script", "innerHTML", "onerror=", "sanitize"],
+    sql_injection: ["SELECT", "WHERE", "UNION", "query(", "$queryRaw", "execute(", "parameterized"],
+    insecure_dependency: ["npm audit", "pnpm audit", "snyk", "dependency", "CVE"],
+    insecure_header: ["Content-Security-Policy", "Strict-Transport-Security", "X-Frame-Options"],
+    csrf_missing: ["csrf", "sameSite", "origin", "referer", "token"],
+  };
+  return byCategory[category] ?? ["security", "hardening"];
+}
+
+function skillTagsForCategory(category: string): string[] {
+  const byCategory: Record<string, string[]> = {
+    secret_leak: ["secrets-management", "credential-hygiene"],
+    pii_exposure: ["privacy", "data-protection"],
+    xss_vulnerability: ["xss-prevention", "output-encoding"],
+    sql_injection: ["sql-injection", "query-parameterization"],
+    insecure_dependency: ["dependency-security", "supply-chain"],
+    insecure_header: ["http-security-headers", "browser-hardening"],
+    csrf_missing: ["csrf-protection", "session-security"],
+  };
+  return byCategory[category] ?? ["secure-coding"];
+}
+
+function educationForCategory(
+  category: string,
+  fallbackSummary: string,
+): {
+  why_it_matters: string;
+  rule_of_thumb: string;
+  common_pitfalls: string[];
+} {
+  const byCategory: Record<
+    string,
+    { why_it_matters: string; rule_of_thumb: string; common_pitfalls: string[] }
+  > = {
+    secret_leak: {
+      why_it_matters:
+        "Credential leaks allow immediate unauthorized access and can bypass many application-layer controls. Rotation and containment costs are high once a key is exposed.",
+      rule_of_thumb:
+        "Treat secrets as toxic data: never store them in code, logs, or client-delivered payloads.",
+      common_pitfalls: [
+        "Committing sample credentials to speed up local testing.",
+        "Logging auth headers or tokens during debugging.",
+        "Embedding long-lived keys in frontend bundles.",
+        "Failing to rotate credentials after accidental exposure.",
+      ],
+    },
+    pii_exposure: {
+      why_it_matters:
+        "PII exposure increases breach impact and legal risk while eroding user trust. Data minimization and redaction reduce blast radius when incidents occur.",
+      rule_of_thumb:
+        "Collect and log the minimum personal data needed, then redact aggressively.",
+      common_pitfalls: [
+        "Dumping full request payloads into logs.",
+        "Returning raw user records instead of DTO-mapped responses.",
+        "Treating test data as non-sensitive when it contains real identifiers.",
+        "Keeping debug artifacts with personal data in long-lived storage.",
+      ],
+    },
+    xss_vulnerability: {
+      why_it_matters:
+        "XSS vulnerabilities let attackers execute scripts in victim browsers, often leading to account takeover and data theft. One unsafe render path can compromise every user who loads it.",
+      rule_of_thumb:
+        "Render untrusted content as text by default and only allow sanitized HTML.",
+      common_pitfalls: [
+        "Using `dangerouslySetInnerHTML` without strict sanitization.",
+        "Trusting server-side input validation alone for output contexts.",
+        "Allowing inline scripts while lacking strong CSP protections.",
+        "Reusing test payloads without validating real rendering sinks.",
+      ],
+    },
+    sql_injection: {
+      why_it_matters:
+        "SQL injection can expose, modify, or destroy sensitive data and frequently enables privilege escalation. Parameterized access patterns dramatically reduce exploitability.",
+      rule_of_thumb:
+        "Never concatenate untrusted input into SQL; bind parameters every time.",
+      common_pitfalls: [
+        "Building dynamic where/order clauses directly from request input.",
+        "Assuming ORM usage is safe while still calling raw query interfaces.",
+        "Skipping allowlists for sort and filter fields.",
+        "Using string interpolation inside migrations or admin endpoints.",
+      ],
+    },
+  };
+
+  return (
+    byCategory[category] ?? {
+      why_it_matters: fallbackSummary,
+      rule_of_thumb: "Apply least privilege and secure defaults across all security-sensitive paths.",
+      common_pitfalls: [
+        "Relying on conventions with no automated checks.",
+        "Fixing findings locally without shared abstractions.",
+        "Leaving detection rules untested after refactors.",
+      ],
+    }
+  );
+}
+
+function remediationForCategory(
+  category: string,
+  title: string,
+): {
+  recommended_pattern: string;
+  implementation_steps: string[];
+  acceptance_criteria: string[];
+} {
+  const recommendedPatternByCategory: Record<string, string> = {
+    secret_leak:
+      "Use secret-manager-backed configuration with server-only access, strict redaction, and automatic rotation workflows.",
+    pii_exposure:
+      "Enforce DTO allowlists + log redaction middleware so personal data cannot leak by default.",
+    xss_vulnerability:
+      "Apply context-aware output encoding and vetted HTML sanitization before any dynamic render sink.",
+    sql_injection:
+      "Use parameterized queries/query builders with explicit allowlists for dynamic fields.",
+    insecure_dependency:
+      "Pin and audit dependencies continuously with automated patching gates in CI.",
+    insecure_header:
+      "Set a centralized security-header policy (CSP/HSTS/frame protections) at app/edge entry points.",
+    csrf_missing:
+      "Use CSRF token validation plus strict same-site/session cookie policy for state-changing requests.",
+  };
+
+  return {
+    recommended_pattern:
+      recommendedPatternByCategory[category] ??
+      `Adopt a shared, test-covered secure pattern for ${title.toLowerCase()}.`,
+    implementation_steps: [
+      `Identify all in-scope code paths for ${title.toLowerCase()} and list current violations.`,
+      "Implement the secure pattern in shared middleware/utilities before patching individual handlers.",
+      "Add negative tests that assert insecure variants are rejected or sanitized.",
+      "Run automated scans and verify the finding no longer reproduces.",
+    ],
+    acceptance_criteria: [
+      "All in-scope paths follow the recommended secure pattern.",
+      "Known insecure payloads/seeds are blocked or neutralized in tests.",
+      "CI security checks pass without regressions for this rule.",
+    ],
+  };
+}
+
+function withRuleMetadata(
+  row: Omit<
+    RuleRow,
+    "targets" | "signals" | "skill_tags" | "version" | "lesson_enabled"
+  >,
+  options?: { lessonEnabled?: boolean },
+): RuleRow {
+  const categorySignals = signalsForCategory(row.category);
+  const contentSignals = [
+    typeof row.contents.regex === "string"
+      ? String(row.contents.regex).slice(0, 120)
+      : "",
+    typeof row.contents.payload === "string"
+      ? String(row.contents.payload).slice(0, 120)
+      : "",
+    typeof row.contents.label === "string" ? String(row.contents.label) : "",
+  ];
+
+  const targets = targetsForCategory(row.category);
+  const signals = uniq([...categorySignals, ...contentSignals]);
+  const skillTags = skillTagsForCategory(row.category);
+  const version = "security-rule-spec/v2.0";
+  const education = educationForCategory(row.category, row.description);
+  const remediation = remediationForCategory(row.category, row.title);
+
+  return {
+    ...row,
+    targets,
+    signals,
+    skill_tags: skillTags,
+    version,
+    lesson_enabled: options?.lessonEnabled ?? true,
+    contents: {
+      ...row.contents,
+      version,
+      targets,
+      signals,
+      skill_tags: skillTags,
+      education,
+      remediation,
+    },
+  };
 }
 
 const SECRET_PATTERNS: PatternRule[] = [
@@ -225,80 +473,105 @@ function buildSecurityRules(): RuleRow[] {
   const rows: RuleRow[] = [];
 
   for (const item of SECRET_PATTERNS) {
-    rows.push({
-      id: `SEC-SECRET-${item.id}`,
-      title: `${item.label} detection`,
-      category: "secret_leak",
-      priority: priorityFromSeverity(item.severity),
-      description: `Detect potential ${item.label.toLowerCase()} exposure in source or logs.`,
-      contents: {
-        source: "SECRET_PATTERNS",
-        ...item,
-      },
-      enabled: true,
-    });
+    rows.push(
+      withRuleMetadata({
+        id: `SEC-SECRET-${item.id}`,
+        title: `${item.label} detection`,
+        category: "secret_leak",
+        priority: priorityFromSeverity(item.severity),
+        description: `Detect potential ${item.label.toLowerCase()} exposure in source or logs.`,
+        contents: {
+          source: "SECRET_PATTERNS",
+          ...item,
+        },
+        enabled: true,
+      }),
+    );
   }
 
   for (const item of PII_PATTERNS) {
-    rows.push({
-      id: `SEC-PII-${item.id}`,
-      title: `${item.label} detection`,
-      category: "pii_exposure",
-      priority: priorityFromSeverity(item.severity),
-      description: `Detect potential ${item.label.toLowerCase()} exposure in source or logs.`,
-      contents: {
-        source: "PII_PATTERNS",
-        ...item,
-      },
-      enabled: true,
-    });
+    rows.push(
+      withRuleMetadata({
+        id: `SEC-PII-${item.id}`,
+        title: `${item.label} detection`,
+        category: "pii_exposure",
+        priority: priorityFromSeverity(item.severity),
+        description: `Detect potential ${item.label.toLowerCase()} exposure in source or logs.`,
+        contents: {
+          source: "PII_PATTERNS",
+          ...item,
+        },
+        enabled: true,
+      }),
+    );
   }
 
   XSS_TEST_PAYLOADS.forEach((payload, index) => {
-    rows.push({
-      id: `SEC-XSS-${String(index + 1).padStart(2, "0")}`,
-      title: `XSS test payload ${index + 1}`,
-      category: "xss_vulnerability",
-      priority: "P2",
-      description: "Synthetic XSS payload for detection/test probing.",
-      contents: {
-        source: "XSS_TEST_PAYLOADS",
-        index,
-        payload,
-      },
-      enabled: true,
-    });
+    rows.push(
+      withRuleMetadata(
+        {
+          id: `SEC-XSS-${String(index + 1).padStart(2, "0")}`,
+          title: `XSS test payload ${index + 1}`,
+          category: "xss_vulnerability",
+          priority: "P2",
+          description: "Synthetic XSS payload for detection/test probing.",
+          contents: {
+            source: "XSS_TEST_PAYLOADS",
+            index,
+            payload,
+          },
+          enabled: true,
+        },
+        { lessonEnabled: false },
+      ),
+    );
   });
 
   SQLI_TEST_PAYLOADS.forEach((payload, index) => {
-    rows.push({
-      id: `SEC-SQLI-${String(index + 1).padStart(2, "0")}`,
-      title: `SQLi test payload ${index + 1}`,
-      category: "sql_injection",
-      priority: "P2",
-      description: "Synthetic SQL injection payload for detection/test probing.",
-      contents: {
-        source: "SQLI_TEST_PAYLOADS",
-        index,
-        payload,
-      },
-      enabled: true,
-    });
+    rows.push(
+      withRuleMetadata(
+        {
+          id: `SEC-SQLI-${String(index + 1).padStart(2, "0")}`,
+          title: `SQLi test payload ${index + 1}`,
+          category: "sql_injection",
+          priority: "P2",
+          description: "Synthetic SQL injection payload for detection/test probing.",
+          contents: {
+            source: "SQLI_TEST_PAYLOADS",
+            index,
+            payload,
+          },
+          enabled: true,
+        },
+        { lessonEnabled: false },
+      ),
+    );
   });
 
   for (const item of EDUCATION_CONTENT) {
-    rows.push({
-      id: `SEC-EDU-${item.type}`,
-      title: `${item.title} education`,
-      category: item.type,
-      priority: priorityFromType(item.type),
-      description: item.explanation,
-      contents: {
-        source: "EDUCATION_CONTENT",
-        ...item,
-      },
-      enabled: true,
-    });
+    rows.push(
+      withRuleMetadata({
+        id: `SEC-EDU-${item.type}`,
+        title: `${item.title} education`,
+        category: item.type,
+        priority: priorityFromType(item.type),
+        description: item.explanation,
+        contents: {
+          source: "EDUCATION_CONTENT",
+          ...item,
+          education: {
+            why_it_matters: item.impact,
+            rule_of_thumb: item.remediation,
+            common_pitfalls: [
+              "Treating this issue as low risk without threat modeling.",
+              "Fixing one endpoint while similar paths stay unprotected.",
+              "Skipping regression tests for known payload variants.",
+            ],
+          },
+        },
+        enabled: true,
+      }),
+    );
   }
 
   return rows;
@@ -315,6 +588,11 @@ async function main(): Promise<void> {
     if (/relation .* does not exist|Could not find the table/i.test(error.message)) {
       throw new Error(
         "Table `rules` is missing. Apply migration qa-web/supabase/migrations/20260228_rules_table.sql first.",
+      );
+    }
+    if (/column .* does not exist/i.test(error.message)) {
+      throw new Error(
+        "Rules columns are outdated. Apply migration qa-web/supabase/migrations/20260301_rules_learning_fields.sql first.",
       );
     }
     throw new Error(error.message);

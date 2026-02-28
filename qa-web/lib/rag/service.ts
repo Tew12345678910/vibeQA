@@ -11,6 +11,18 @@ type RuleRow = {
   priority: string;
   description: string;
   contents: Record<string, unknown>;
+  targets: string[];
+  signals: string[];
+  skill_tags: string[];
+  version: string;
+  lesson_enabled: boolean;
+};
+
+type RuleMatchRow = {
+  control_id: string;
+  chunk_text: string;
+  metadata: Record<string, unknown>;
+  score: number;
 };
 
 type CodeChunkRow = {
@@ -275,6 +287,112 @@ function normalizePriority(priority: string): "P0" | "P1" | "P2" {
   if (value === "P0") return "P0";
   if (value === "P1") return "P1";
   return "P2";
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item ?? "").trim())
+    .filter((item) => item.length > 0);
+}
+
+function escapeRegex(input: string): string {
+  return input.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+}
+
+function globToRegExp(glob: string): RegExp {
+  const normalized = glob.replace(/\\/g, "/");
+  const placeholder = "__DOUBLE_STAR__";
+  const withPlaceholder = normalized.replace(/\*\*/g, placeholder);
+  const escaped = escapeRegex(withPlaceholder);
+  const wildcarded = escaped
+    .replace(new RegExp(placeholder, "g"), ".*")
+    .replace(/\\\*/g, "[^/]*")
+    .replace(/\\\?/g, ".");
+  return new RegExp(`^${wildcarded}$`, "i");
+}
+
+function pathMatchesTargets(filePath: string, targets: string[]): boolean {
+  if (targets.length === 0) return true;
+  const normalizedPath = filePath.replace(/\\/g, "/");
+  return targets.some((target) => {
+    try {
+      return globToRegExp(target).test(normalizedPath);
+    } catch {
+      return false;
+    }
+  });
+}
+
+function signalMatchesChunk(chunkText: string, signal: string): boolean {
+  const source = chunkText.toLowerCase();
+  const needle = signal.trim();
+  if (!needle) return false;
+
+  const regexMatch = /^\/(.+)\/([gimsuy]*)$/.exec(needle);
+  if (regexMatch) {
+    try {
+      const [, body, flags] = regexMatch;
+      return new RegExp(body, flags).test(chunkText);
+    } catch {
+      return source.includes(needle.toLowerCase());
+    }
+  }
+
+  return source.includes(needle.toLowerCase());
+}
+
+function tuneRuleHitsForChunk(
+  rows: unknown[],
+  chunk: CodeChunkRow,
+): RuleMatchRow[] {
+  const parsed = rows
+    .map((row) => {
+      const value = row as Record<string, unknown>;
+      const metadata =
+        value.metadata && typeof value.metadata === "object"
+          ? (value.metadata as Record<string, unknown>)
+          : {};
+
+      return {
+        control_id: String(value.control_id ?? ""),
+        chunk_text: String(value.chunk_text ?? ""),
+        metadata,
+        score: Number(value.score ?? 0),
+      } satisfies RuleMatchRow;
+    })
+    .filter((row) => row.control_id);
+
+  const tuned = parsed
+    .map((row) => {
+      const targets = asStringArray(row.metadata.targets);
+      const signals = asStringArray(row.metadata.signals);
+      const targetMatch = pathMatchesTargets(chunk.path, targets);
+      const signalMatch =
+        signals.length === 0 ||
+        signals.some((signal) => signalMatchesChunk(chunk.chunk_text, signal));
+
+      let adjustedScore = row.score;
+      if (targets.length > 0) {
+        adjustedScore += targetMatch ? 0.08 : -0.12;
+      }
+      if (signals.length > 0) {
+        adjustedScore += signalMatch ? 0.1 : -0.05;
+      }
+
+      return {
+        row,
+        targetMatch,
+        signalMatch,
+        adjustedScore,
+      };
+    })
+    .filter((item) => item.targetMatch)
+    .sort((a, b) => b.adjustedScore - a.adjustedScore)
+    .slice(0, RULE_MATCH_COUNT)
+    .map((item) => item.row);
+
+  return tuned;
 }
 
 function chunkByLines(
@@ -663,7 +781,9 @@ export async function indexRulesIfNeeded(): Promise<void> {
 
   const { data: rules, error: rulesError } = await db
     .from("rules")
-    .select("id, title, category, priority, description, contents")
+    .select(
+      "id, title, category, priority, description, contents, targets, signals, skill_tags, version, lesson_enabled",
+    )
     .eq("enabled", true)
     .order("id", { ascending: true });
 
@@ -718,6 +838,11 @@ export async function indexRulesIfNeeded(): Promise<void> {
       `Category: ${rule.category}`,
       `Priority: ${rule.priority}`,
       `Description: ${rule.description}`,
+      `Version: ${rule.version}`,
+      `Lesson Enabled: ${rule.lesson_enabled}`,
+      `Targets: ${JSON.stringify(rule.targets ?? [])}`,
+      `Signals: ${JSON.stringify(rule.signals ?? [])}`,
+      `Skill Tags: ${JSON.stringify(rule.skill_tags ?? [])}`,
       "",
       `Contents: ${JSON.stringify(rule.contents ?? {}, null, 2)}`,
     ].join("\n");
@@ -739,6 +864,11 @@ export async function indexRulesIfNeeded(): Promise<void> {
         category: rule.category,
         priority: rule.priority,
         title: rule.title,
+        targets: rule.targets ?? [],
+        signals: rule.signals ?? [],
+        skill_tags: rule.skill_tags ?? [],
+        version: rule.version ?? "",
+        lesson_enabled: Boolean(rule.lesson_enabled),
       },
       embedding,
     });
@@ -1353,7 +1483,7 @@ export async function auditRepoWithRag(
         `AUDIT TARGET\nFILE: ${chunk.path}\nLINES: ${chunk.line_start}-${chunk.line_end}\n\n${chunk.chunk_text}`,
       );
 
-      const { data: ruleHits, error: ruleError } = await db.rpc(
+      const { data: ruleHitsRaw, error: ruleError } = await db.rpc(
         "match_control_chunks",
         {
           query_embedding: queryEmbedding,
@@ -1363,6 +1493,8 @@ export async function auditRepoWithRag(
       if (ruleError) {
         throw new Error(ruleError.message);
       }
+
+      const ruleHits = tuneRuleHitsForChunk(ruleHitsRaw ?? [], chunk);
 
       const { data: codeHitsRaw, error: codeError } = await db.rpc(
         "match_code_chunks",
@@ -1387,7 +1519,25 @@ export async function auditRepoWithRag(
         } satisfies CodeChunkRow;
       });
 
-      if ((ruleHits ?? []).length === 0 || codeHits.length === 0) {
+      if (ruleHits.length === 0 || codeHits.length === 0) {
+        // Update progress every 5 chunks so the client poll sees non-zero counts
+        // even when most chunks don't produce rule/code hits.
+        if (input.projectId && input.runId && processedChunks % 5 === 0) {
+          await upsertRun({
+            projectId: input.projectId,
+            runId: input.runId,
+            counts: toRunCounts(findings),
+            metaJson: {
+              status: "running",
+              scanner: "rag-openai",
+              repo: indexed.repoFull,
+              commit_sha: indexed.commitSha,
+              project_name: input.projectName ?? null,
+              processed_chunks: processedChunks,
+              total_chunks: targetChunks.length,
+            },
+          });
+        }
         continue;
       }
 
@@ -1428,9 +1578,7 @@ export async function auditRepoWithRag(
       }
 
       const controlIds = new Set(
-        (ruleHits ?? []).map((row: unknown) =>
-          String((row as Record<string, unknown>).control_id ?? ""),
-        ),
+        ruleHits.map((row) => row.control_id),
       );
       if (!controlIds.has(card.id)) {
         continue;

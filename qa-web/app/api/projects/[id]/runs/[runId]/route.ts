@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 
 import { getProjectRunById } from "@/lib/db/repository";
 
+// Always query the DB fresh so the poll loop sees live processed_chunks progress.
+export const dynamic = "force-dynamic";
+
 type Context = { params: Promise<{ id: string; runId: string }> };
 
 export async function GET(_: Request, context: Context) {

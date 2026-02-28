@@ -1,10 +1,24 @@
 import { NextResponse } from "next/server";
 
 import { upsertProject, listProjectsWithStats } from "@/lib/db/repository";
+import { getUserFromToken } from "@/lib/auth";
 
-export async function GET() {
+function getBearerToken(request: Request): string | null {
+  const header = request.headers.get("authorization") ?? "";
+  return header.startsWith("Bearer ") ? header.slice(7).trim() : null;
+}
+
+export async function GET(request: Request) {
+  const token = getBearerToken(request);
+  if (!token) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const user = await getUserFromToken(token);
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
-    const projects = await listProjectsWithStats();
+    const projects = await listProjectsWithStats(user.id);
     return NextResponse.json({ projects });
   } catch (error) {
     return NextResponse.json(
@@ -18,6 +32,14 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const token = getBearerToken(request);
+  if (!token) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const user = await getUserFromToken(token);
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const body = (await request.json()) as {
       id: string;
@@ -38,6 +60,7 @@ export async function POST(request: Request) {
 
     await upsertProject({
       id: body.id,
+      userId: user.id,
       name: body.name,
       sourceType: body.sourceType ?? "local",
       githubRepo: body.githubRepo,
@@ -53,7 +76,7 @@ export async function POST(request: Request) {
         error:
           error instanceof Error ? error.message : "Failed to save project",
       },
-      { status: 500 },
+      { status: 400 },
     );
   }
 }

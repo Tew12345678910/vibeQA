@@ -10,6 +10,7 @@ import {
   Play,
   Plus,
   Search,
+  Trash2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { formatDate } from "@/lib/browserqa/format";
 import { CardsLoadingState } from "@/components/browserqa/LoadingStates";
+import { getAuthHeaders } from "@/lib/supabase/browser";
 
 // Shape of /api/projects response items (mirrors ProjectWithStats from the DB layer)
 type ProjectSummary = {
@@ -41,11 +43,17 @@ export function ProjectsPageClient() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/projects", { cache: "no-store" });
+      const authHeaders = await getAuthHeaders();
+      const res = await fetch("/api/projects", {
+        cache: "no-store",
+        headers: authHeaders,
+      });
       if (!res.ok) throw new Error("Failed to load projects");
       const body = (await res.json()) as { projects: ProjectSummary[] };
       setProjects(body.projects);
@@ -54,6 +62,24 @@ export function ProjectsPageClient() {
       setError(err instanceof Error ? err.message : "Failed to load projects");
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const handleDelete = useCallback(async (id: string) => {
+    setDeletingId(id);
+    try {
+      const authHeaders = await getAuthHeaders();
+      const res = await fetch(`/api/projects/${id}`, {
+        method: "DELETE",
+        headers: authHeaders,
+      });
+      if (!res.ok) throw new Error("Failed to delete project");
+      setProjects((prev) => prev.filter((p) => p.id !== id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete project");
+    } finally {
+      setDeletingId(null);
+      setConfirmDeleteId(null);
     }
   }, []);
 
@@ -232,6 +258,37 @@ export function ProjectsPageClient() {
                       <Play className="h-4 w-4" />
                     </Link>
                   </Button>
+                  {confirmDeleteId === project.id ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="shrink-0 bg-red-600 hover:bg-red-500 text-white"
+                        disabled={deletingId === project.id}
+                        onClick={() => void handleDelete(project.id)}
+                      >
+                        {deletingId === project.id ? "Deleting…" : "Confirm"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="shrink-0 text-slate-400 hover:text-slate-100"
+                        onClick={() => setConfirmDeleteId(null)}
+                      >
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0 text-slate-500 hover:text-red-400 hover:bg-red-400/10"
+                      onClick={() => setConfirmDeleteId(project.id)}
+                      aria-label="Delete project"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>

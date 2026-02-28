@@ -10,6 +10,7 @@ function throwDbError(error: { message?: string } | null): never {
 
 export type ProjectRow = {
   id: string;
+  user_id: string | null;
   name: string;
   source_type: string;
   github_repo: string | null;
@@ -22,6 +23,7 @@ export type ProjectRow = {
 
 export async function upsertProject(project: {
   id: string;
+  userId: string;
   name: string;
   sourceType: string;
   githubRepo?: string;
@@ -33,6 +35,7 @@ export async function upsertProject(project: {
   const { error } = await db.from("projects").upsert(
     {
       id: project.id,
+      user_id: project.userId,
       name: project.name,
       source_type: project.sourceType,
       github_repo: project.githubRepo ?? null,
@@ -46,11 +49,12 @@ export async function upsertProject(project: {
   if (error) throwDbError(error);
 }
 
-export async function listProjects(): Promise<ProjectRow[]> {
+export async function listProjects(userId: string): Promise<ProjectRow[]> {
   const db = getDbClient();
   const { data, error } = await db
     .from("projects")
     .select("*")
+    .eq("user_id", userId)
     .order("created_at", { ascending: false });
   if (error) throwDbError(error);
   return (data ?? []) as ProjectRow[];
@@ -66,12 +70,12 @@ export type ProjectWithStats = ProjectRow & {
   latest_count_total: number;
 };
 
-export async function listProjectsWithStats(): Promise<ProjectWithStats[]> {
+export async function listProjectsWithStats(userId: string): Promise<ProjectWithStats[]> {
   const db = getDbClient();
 
   const [{ data: projects, error: projectsError }, { data: runs, error: runsError }] =
     await Promise.all([
-      db.from("projects").select("*").order("created_at", { ascending: false }),
+      db.from("projects").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
       db
         .from("project_runs")
         .select("id, project_id, count_p0, count_p1, count_p2, count_total, created_at")
@@ -126,6 +130,17 @@ export async function getProjectRow(id: string): Promise<ProjectRow | null> {
   return (data ?? null) as ProjectRow | null;
 }
 
+export async function getProjectOwner(id: string): Promise<string | null> {
+  const db = getDbClient();
+  const { data, error } = await db
+    .from("projects")
+    .select("user_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throwDbError(error);
+  return (data as { user_id: string | null } | null)?.user_id ?? null;
+}
+
 export async function patchProjectRow(
   id: string,
   patch: {
@@ -134,6 +149,7 @@ export async function patchProjectRow(
     name?: string;
     configJson?: Record<string, unknown>;
   },
+  userId?: string,
 ): Promise<void> {
   const db = getDbClient();
   const update: Record<string, unknown> = {
@@ -143,13 +159,17 @@ export async function patchProjectRow(
   if (patch.websiteUrl !== undefined) update.website_url = patch.websiteUrl;
   if (patch.name !== undefined) update.name = patch.name;
   if (patch.configJson !== undefined) update.config_json = patch.configJson;
-  const { error } = await db.from("projects").update(update).eq("id", id);
+  let query = db.from("projects").update(update).eq("id", id);
+  if (userId) query = query.eq("user_id", userId);
+  const { error } = await query;
   if (error) throwDbError(error);
 }
 
-export async function deleteProjectRow(id: string): Promise<void> {
+export async function deleteProjectRow(id: string, userId?: string): Promise<void> {
   const db = getDbClient();
-  const { error } = await db.from("projects").delete().eq("id", id);
+  let query = db.from("projects").delete().eq("id", id);
+  if (userId) query = query.eq("user_id", userId);
+  const { error } = await query;
   if (error) throwDbError(error);
 }
 

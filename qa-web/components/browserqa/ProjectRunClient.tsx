@@ -28,6 +28,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DetailLoadingState } from "@/components/browserqa/LoadingStates";
+import { getAuthHeaders } from "@/lib/supabase/browser";
 import {
   fallbackRouteDescription,
   normalizeRoutePath,
@@ -308,6 +309,20 @@ export function ProjectRunClient({ projectId, initialRunId }: Props) {
     null,
   );
 
+  /** Fire-and-forget PATCH to /api/projects/:id with the user's auth token. */
+  const patchProjectApi = useCallback(
+    (data: Record<string, unknown>) => {
+      void getAuthHeaders().then((authHeaders) =>
+        fetch(`/api/projects/${projectId}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json", ...authHeaders },
+          body: JSON.stringify(data),
+        }).catch(() => {}),
+      );
+    },
+    [projectId],
+  );
+
   const saveRepo = () => {
     const val = repoInput.trim();
     if (!val) return;
@@ -315,11 +330,7 @@ export function ProjectRunClient({ projectId, initialRunId }: Props) {
     const updated = patchProject(projectId, { githubRepo: url });
     if (updated) setProject(updated);
     setRepoInput("");
-    void fetch(`/api/projects/${projectId}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ githubRepo: url }),
-    }).catch(() => {});
+    patchProjectApi({ githubRepo: url });
   };
 
   const saveUrl = () => {
@@ -329,11 +340,7 @@ export function ProjectRunClient({ projectId, initialRunId }: Props) {
     if (updated) setProject(updated);
     setEditingUrl(false);
     setUrlInput("");
-    void fetch(`/api/projects/${projectId}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ websiteUrl: val }),
-    }).catch(() => {});
+    patchProjectApi({ websiteUrl: val });
   };
 
   useEffect(() => {
@@ -493,13 +500,7 @@ export function ProjectRunClient({ projectId, initialRunId }: Props) {
           if (updatedProject) {
             setProject(updatedProject);
           }
-          void fetch(`/api/projects/${projectId}`, {
-            method: "PATCH",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              configJson: { analysis },
-            }),
-          }).catch(() => {});
+          patchProjectApi({ configJson: { analysis } });
 
           if (reason !== "run") {
             setAnalysisStatus(

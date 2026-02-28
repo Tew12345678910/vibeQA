@@ -1,87 +1,88 @@
-# EduQA Web Auditor (Vercel Next.js)
+# VibeQA
 
-Run-centric web auditor for hosted HTTPS apps. The app starts audits on a cloud browser service, tracks status, and renders educational results for desktop and mobile.
+The QA education layer for AI-assisted development.
+
+VibeQA runs two agents on every scan:
+- a **code analysis agent** for repository-level checks
+- a **browser agent** for runtime behavior on the live site
+
+Instead of just listing bugs, it explains **why each issue matters** and gives **concrete fix steps**.
 
 ## What This Repo Contains
 
-- `web/`: Next.js App Router frontend + API routes
-- `data/`: local scratch folder (not used in production)
+- `qa-web/` — main Next.js app (landing page, product UI, API routes)
+- `api/` — Python service modules used for browser/review workflows and supporting logic
+- `aws/` — cloud/browser-related helpers
 
-## Product Scope
+## Product Flow (Matches Landing Page)
 
-- Hosted URL input only (`https://`)
-- Viewports: desktop `1440x900` and mobile `390x844`
-- Async audit lifecycle: `queued`, `running`, `completed`, `failed`, `canceled`
-- Results: page x viewport matrix, issue cards, evidence links, JSON/Markdown export
-- Persistence: Neon Postgres (`DATABASE_URL`)
+1. Drop your GitHub repo (or URL + website URL).
+2. VibeQA runs code + browser analysis in parallel.
+3. You get prioritized P0/P1/P2 findings with evidence, impact, and fix guidance.
 
-## Removed Legacy Stack
+## Core Features
 
-Python agent scripts, suite/testcase manifest generation, local worker orchestration, and SQLite report exports were removed.
+- GitHub repo intake (picker + URL)
+- Project/run pipeline (`/projects/new` -> `/projects/:id/run`)
+- Framework + route analysis for repo context
+- Unified issue report with educational guidance
+- Supabase-backed persistence for projects, runs, and issues
 
 ## Requirements
 
 - Node.js 20+
-- npm 10+
-- Neon Postgres database
-- Cloud browser API endpoint + API key
-
-## Environment
-
-Create `web/.env.local` from `web/.env.example`:
-
-```bash
-cd web
-cp .env.example .env.local
-```
-
-Required variables:
-
-```env
-DATABASE_URL=postgres://...
-CLOUD_BROWSER_API_BASE_URL=https://your-cloud-browser-api.example.com
-CLOUD_BROWSER_API_KEY=...
-APP_BASE_URL=http://localhost:3000
-```
+- pnpm 10+
+- Supabase project (URL + keys)
+- OpenAI-compatible API key for AI analysis
 
 ## Local Development
 
 ```bash
-cd web
-npm install
-npm run db:setup
-npm run dev
+cd qa-web
+pnpm install
+pnpm dev
 ```
 
 Open `http://localhost:3000`.
 
-## API Endpoints
+## Environment (`qa-web/.env.local`)
 
-- `POST /api/audits` start audit
-- `GET /api/audits` list audits
-- `GET /api/audits/:auditId` get latest audit status/results (includes cloud sync for active runs)
-- `POST /api/audits/:auditId/cancel` cancel run
-- `GET /api/audits/:auditId/export?format=json|md` export report
+Required:
 
-## Deployment (Vercel)
-
-Set project root to `web/`.
-
-Set environment variables in Vercel:
-
-- `DATABASE_URL`
-- `CLOUD_BROWSER_API_BASE_URL`
-- `CLOUD_BROWSER_API_KEY`
-- `APP_BASE_URL`
-
-Build command:
-
-```bash
-npm run build
+```env
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY= # or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY
+SUPABASE_SECRET_KEY= # or SUPABASE_SERVICE_ROLE_KEY
+AI_API_KEY=
 ```
 
-Install command:
+Also supported:
 
-```bash
-npm install
+```env
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+AI_BASE_URL=
+AI_CHAT_MODEL=
+AI_EMBEDDING_MODEL=
+SUPABASE_STORAGE_BUCKET=qa-project-artifacts
+BROWSER_USE_SERVER_BASE_URL=
+BROWSER_USE_SERVER_API_KEY=
+CLOUD_BROWSER_API_BASE_URL=
+CLOUD_BROWSER_API_KEY=
 ```
+
+## Main API Routes
+
+- `POST /api/pipeline/analysis/github`
+- `POST /api/pipeline/scans/github`
+- `POST /api/pipeline/reviews`
+- `GET /api/pipeline/issues/:runId`
+- `GET /api/issues?runId=<RUN_ID>`
+- `GET|POST /api/projects`
+- `PATCH|DELETE /api/projects/:id`
+- `GET|POST /api/projects/:id/runs`
+
+## Notes
+
+- The current app shell and landing branding are **VibeQA**.
+- If you deploy to Vercel, set the project root to `qa-web/`.

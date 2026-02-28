@@ -8,6 +8,7 @@ import type { GitHubRepoItem } from "@/app/api/github/repos/route";
 import { GitHubRepoPicker } from "@/components/browserqa/GitHubRepoPicker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { getAuthHeaders } from "@/lib/supabase/browser";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -194,9 +195,10 @@ export function NewProjectPipelineClient() {
       // Non-fatal: if this fails the project is still in localStorage and will be
       // upserted server-side on the first scan run.
       try {
+        const authHeaders = await getAuthHeaders();
         await fetch("/api/projects", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", ...authHeaders },
           body: JSON.stringify({
             id: finalProject.id,
             name: finalProject.name,

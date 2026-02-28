@@ -309,6 +309,73 @@ function githubHeaders(token?: string): Record<string, string> {
   };
 }
 
+function parseGithubErrorMessage(rawBody: string): string | null {
+  const trimmed = rawBody.trim();
+  if (!trimmed) return null;
+
+  try {
+    const parsed = JSON.parse(trimmed) as { message?: unknown };
+    if (typeof parsed.message === "string" && parsed.message.trim()) {
+      return parsed.message.trim();
+    }
+  } catch {
+    // Ignore parse errors; fall back to plain text.
+  }
+
+  return trimmed;
+}
+
+function parseGithubRateLimitReset(rawValue: string | null): string | null {
+  if (!rawValue) return null;
+  const epochSeconds = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(epochSeconds) || epochSeconds <= 0) return null;
+  return new Date(epochSeconds * 1_000).toISOString();
+}
+
+async function buildGithub403Message(args: {
+  response: Response;
+  operation: string;
+  tokenProvided: boolean;
+}): Promise<string> {
+  const bodyText = await args.response.text();
+  const githubMessage = parseGithubErrorMessage(bodyText);
+
+  const remaining = args.response.headers.get("x-ratelimit-remaining");
+  const resetAt = parseGithubRateLimitReset(
+    args.response.headers.get("x-ratelimit-reset"),
+  );
+  const retryAfter = args.response.headers.get("retry-after");
+  const ssoHeader = (args.response.headers.get("x-github-sso") ?? "")
+    .toLowerCase()
+    .trim();
+  const grantedScopes = args.response.headers.get("x-oauth-scopes");
+  const acceptedScopes = args.response.headers.get("x-accepted-oauth-scopes");
+
+  if (remaining === "0") {
+    const authLabel = args.tokenProvided ? "authenticated" : "unauthenticated";
+    const resetClause = resetAt ? ` Reset at ${resetAt}.` : "";
+    const retryClause = retryAfter ? ` Retry after ${retryAfter}s.` : "";
+    return `GitHub API rate limit reached during ${args.operation} (${authLabel} requests).${resetClause}${retryClause}`;
+  }
+
+  if (ssoHeader.includes("required") || /saml|single sign[- ]on/i.test(githubMessage ?? "")) {
+    return "GitHub organization SSO authorization is required for this token. Authorize the token for the org, then retry.";
+  }
+
+  if (/resource not accessible by integration/i.test(githubMessage ?? "")) {
+    const scopeHint =
+      grantedScopes || acceptedScopes
+        ? ` Granted scopes: ${grantedScopes || "(none)"}. Required scopes: ${acceptedScopes || "(unspecified)"}.`
+        : "";
+    return `GitHub denied access to this repository resource (403).${scopeHint}`;
+  }
+
+  const details = githubMessage
+    ? ` GitHub message: ${githubMessage}`
+    : "";
+  return `GitHub API access denied (403) during ${args.operation}. Check token scopes, org SSO authorization, and rate limits.${details}`;
+}
+
 function sha256(input: string): string {
   return crypto.createHash("sha256").update(input).digest("hex");
 }
@@ -677,7 +744,11 @@ async function fetchRepoMetadata(args: {
 
   if (response.status === 403) {
     throw new Error(
-      "GitHub API access denied (403). Check scopes and rate limits.",
+      await buildGithub403Message({
+        response,
+        operation: "repository metadata lookup",
+        tokenProvided: Boolean(args.githubToken),
+      }),
     );
   }
 
@@ -713,6 +784,15 @@ async function fetchRepoTreeByRef(args: {
     throw new Error("Repository is empty or unavailable for tree scan.");
   if (response.status === 401)
     throw new Error("GitHub token is invalid or expired.");
+  if (response.status === 403) {
+    throw new Error(
+      await buildGithub403Message({
+        response,
+        operation: "repository tree lookup",
+        tokenProvided: Boolean(args.githubToken),
+      }),
+    );
+  }
 
   throw new Error(
     `GitHub tree API failed (${response.status}) for ref '${args.ref}'.`,
@@ -734,6 +814,15 @@ async function fetchCommitSha(args: {
   );
 
   if (!response.ok) {
+    if (response.status === 403) {
+      throw new Error(
+        await buildGithub403Message({
+          response,
+          operation: `commit lookup for ref '${args.ref}'`,
+          tokenProvided: Boolean(args.githubToken),
+        }),
+      );
+    }
     throw new Error(
       `Failed to resolve commit SHA (${response.status}) for ref '${args.ref}'.`,
     );
@@ -763,6 +852,15 @@ async function fetchBlobContent(args: {
 
   if (!response.ok) {
     if (response.status === 404) return null;
+    if (response.status === 403) {
+      throw new Error(
+        await buildGithub403Message({
+          response,
+          operation: "repository blob fetch",
+          tokenProvided: Boolean(args.githubToken),
+        }),
+      );
+    }
     throw new Error(`GitHub blob API failed (${response.status}).`);
   }
 

@@ -64,3 +64,46 @@ python -m qa_agentic_team.cli \
 ```
 
 This starts a local static server for `sample_project/ui`, runs the QA pipeline, and writes reports to `output/`.
+
+## Next.js QA Platform (Browser-Use Wrapper)
+
+The repository now includes a Next.js-first QA platform under `web/` that wraps the Python analysis/generation pipeline and executes run-cases via Browser-Use.
+
+### Features in v1
+
+- Single workspace, no auth.
+- Manual/on-demand runs only.
+- Per-suite base URL.
+- Desktop + mobile viewport matrix by default.
+- SQLite persistence (`data/qa.db`) with Drizzle ORM.
+- Report export files in `output/runs/<runId>/`.
+
+### Setup
+
+```bash
+cd web
+npm install
+cp .env.example .env.local
+npm run migrate
+npm run dev
+```
+
+Open `http://localhost:3000`.
+
+### Environment variables
+
+- `BROWSER_USE_BASE_URL`: Browser-Use API endpoint (self-hosted required for localhost/private targets).
+- `BROWSER_USE_API_KEY`: Browser-Use API key.
+- `QA_DB_PATH`: SQLite file path (defaults to `../data/qa.db`).
+
+### Main API routes
+
+- `POST /api/suites`
+- `GET /api/suites`
+- `GET /api/suites/:suiteId`
+- `POST /api/suites/:suiteId/sync`
+- `POST /api/suites/:suiteId/runs`
+- `GET /api/runs/:runId`
+- `GET /api/runs/:runId/issues`
+- `GET /api/runs/:runId/report`
+- `POST /api/runs/:runId/cancel`

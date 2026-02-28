@@ -1,0 +1,138 @@
+:root {
+  --bg: #f7f8fa;
+  --text: #111827;
+  --muted: #6b7280;
+  --card: #ffffff;
+  --border: #d1d5db;
+  --accent: #0f766e;
+  --fail: #b91c1c;
+  --ok: #166534;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at 0% 0%, #e4f4f1 0%, var(--bg) 36%);
+  color: var(--text);
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.25rem;
+}
+
+header.nav {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+}
+
+.grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.grid.cols-3 {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.status-chip {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.78rem;
+  border: 1px solid var(--border);
+}
+
+.status-chip.ok {
+  color: var(--ok);
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.status-chip.fail {
+  color: var(--fail);
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+.status-chip.running {
+  color: #1d4ed8;
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th,
+.table td {
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  padding: 0.65rem;
+  vertical-align: top;
+}
+
+button {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: white;
+  padding: 0.45rem 0.75rem;
+  cursor: pointer;
+}
+
+button.primary {
+  border-color: #0f766e;
+  background: #0f766e;
+  color: #fff;
+}
+
+form.inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+form.inline input {
+  flex: 1;
+  min-width: 180px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+}
+
+@media (max-width: 720px) {
+  header.nav {
+    flex-wrap: wrap;
+  }
+
+  .table {
+    font-size: 0.9rem;
+  }
+}

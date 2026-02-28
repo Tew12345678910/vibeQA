@@ -834,17 +834,15 @@ export function LandingPage() {
             How it works
           </p>
           <h2 className="text-3xl font-bold text-white sm:text-4xl">
-            Paste a URL. Get a curriculum.
+            Connect a repo. Get a curriculum.
           </h2>
         </div>
         <div className="relative grid gap-12 md:grid-cols-3">
-          <div className="absolute top-5 left-[calc(33%+20px)] hidden h-px w-[calc(34%-40px)] bg-linear-to-r from-emerald-500/40 to-blue-500/40 md:block" />
-          <div className="absolute top-5 left-[calc(67%+20px)] hidden h-px w-[calc(20%-20px)] bg-linear-to-r from-blue-500/40 to-violet-500/40 md:block" />
           {[
             {
               n: "01",
               title: "Drop your GitHub repo",
-              body: "Paste a URL or pick from your connected repos. No write access, no OAuth scopes beyond 'read'. The agents fetch the tree and get to work.",
+              body: "Pick from your connected repos. No write access, no OAuth scopes beyond 'read'. The agents fetch the tree and get to work.",
             },
             {
               n: "02",
@@ -905,7 +903,7 @@ export function LandingPage() {
             <span className="text-emerald-400">your vibe-coded projects.</span>
           </h2>
           <p className="mx-auto mb-8 max-w-xl text-slate-400">
-            Paste your GitHub URL. In under two minutes, get a full code +
+            Connect your GitHub repo. In under two minutes, get a full code +
             browser audit — with explanations that make you a better builder,
             not just a faster one.
           </p>

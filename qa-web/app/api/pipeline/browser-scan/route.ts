@@ -19,6 +19,9 @@ type BrowserScanBody = {
   projectName?: string;
   instruction?: string;
   routes?: string[];
+  siteAuthType?: "none" | "credentials" | "social";
+  siteUsername?: string;
+  sitePassword?: string;
 };
 
 export async function POST(request: Request) {

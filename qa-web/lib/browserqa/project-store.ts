@@ -13,6 +13,8 @@ const DEFAULT_FOCUS: Focus[] = [
   "functional",
 ];
 
+export type SiteAuthType = "none" | "credentials" | "social";
+
 export type ProjectConfig = {
   id: string;
   name: string;
@@ -28,6 +30,11 @@ export type ProjectConfig = {
   focus: Focus[];
   detectedFramework?: string;
   analysis?: ProjectAnalysis;
+  /** Whether the website requires login to be tested by the browser agent. */
+  siteAuthType?: SiteAuthType;
+  siteUsername?: string;
+  /** Stored in localStorage — not sent server-side; used only for the local browser agent. */
+  sitePassword?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -81,6 +88,20 @@ function safeParse(raw: string | null): ProjectConfig[] {
             ? String(entry.detectedFramework)
             : undefined,
           analysis: normalizeProjectAnalysis(entry.analysis),
+          siteAuthType:
+            entry.siteAuthType === "credentials"
+              ? "credentials"
+              : entry.siteAuthType === "social"
+                ? "social"
+                : entry.siteAuthType === "none"
+                  ? "none"
+                  : undefined,
+          siteUsername: entry.siteUsername
+            ? String(entry.siteUsername)
+            : undefined,
+          sitePassword: entry.sitePassword
+            ? String(entry.sitePassword)
+            : undefined,
           createdAt: String(entry.createdAt ?? new Date().toISOString()),
           updatedAt: String(entry.updatedAt ?? new Date().toISOString()),
         } satisfies ProjectConfig;
@@ -186,6 +207,9 @@ export function patchProject(
       | "detectedFramework"
       | "routes"
       | "analysis"
+      | "siteAuthType"
+      | "siteUsername"
+      | "sitePassword"
     >
   >,
 ): ProjectConfig | null {

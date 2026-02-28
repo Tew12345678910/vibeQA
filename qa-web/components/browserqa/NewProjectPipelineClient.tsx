@@ -39,8 +39,9 @@ export function NewProjectPipelineClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [sourceType, setSourceType] = useState<"zip" | "github" | "github-repos">("github-repos");
-  const [zipFile, setZipFile] = useState<File | null>(null);
+  const [sourceType, setSourceType] = useState<"github" | "github-repos">(
+    "github-repos",
+  );
   const [githubUrl, setGithubUrl] = useState("");
   const [selectedRepo, setSelectedRepo] = useState<GitHubRepoItem | null>(null);
   const [repoRefreshTick, setRepoRefreshTick] = useState(0);
@@ -66,7 +67,7 @@ export function NewProjectPipelineClient() {
       setError(`GitHub connection failed: ${decodeURIComponent(ghError)}`);
       router.replace("/projects/new");
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
   function handleRepoSelect(repo: GitHubRepoItem) {
@@ -84,60 +85,40 @@ export function NewProjectPipelineClient() {
     setError("");
 
     try {
-      if (sourceType === "zip") {
-        if (!zipFile) {
-          throw new Error("Please select a ZIP file");
-        }
+      // "github" or "github-repos" — both use repoUrl
+      const url =
+        sourceType === "github-repos" ? selectedRepo?.htmlUrl : githubUrl.trim();
+      if (!url) {
+        throw new Error(
+          sourceType === "github-repos"
+            ? "Please select a repository"
+            : "Please provide a GitHub repository URL",
+        );
+      }
 
-        const formData = new FormData();
-        formData.set("file", zipFile);
-        if (projectName.trim()) {
-          formData.set("projectName", projectName.trim());
-        }
+      const githubToken = sessionStorage.getItem("github_provider_token")?.trim();
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (githubToken) {
+        headers["x-github-token"] = githubToken;
+      }
 
-        const response = await fetch("/api/pipeline/scans/zip", {
-          method: "POST",
-          body: formData,
-        });
+      const response = await fetch("/api/pipeline/scans/github", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          repoUrl: url,
+          projectName: projectName.trim() || undefined,
+        }),
+      });
 
-        const payload = (await response.json()) as ScanResponse | { error?: string };
-        if (!response.ok || !("scanId" in payload)) {
-          throw new Error((payload as { error?: string }).error ?? "ZIP scan failed");
-        }
+      const payload = (await response.json()) as ScanResponse | { error?: string };
+      if (!response.ok || !("scanId" in payload)) {
+        throw new Error((payload as { error?: string }).error ?? "GitHub scan failed");
+      }
 
-        setScan(payload);
-        if (!projectName.trim()) {
-          setProjectName(payload.project.name);
-        }
-      } else {
-        // "github" or "github-repos" — both use repoUrl
-        const url = sourceType === "github-repos" ? selectedRepo?.htmlUrl : githubUrl.trim();
-        if (!url) {
-          throw new Error(
-            sourceType === "github-repos"
-              ? "Please select a repository"
-              : "Please provide a public GitHub repository URL",
-          );
-        }
-
-        const response = await fetch("/api/pipeline/scans/github", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            repoUrl: url,
-            projectName: projectName.trim() || undefined,
-          }),
-        });
-
-        const payload = (await response.json()) as ScanResponse | { error?: string };
-        if (!response.ok || !("scanId" in payload)) {
-          throw new Error((payload as { error?: string }).error ?? "GitHub scan failed");
-        }
-
-        setScan(payload);
-        if (!projectName.trim()) {
-          setProjectName(payload.project.name);
-        }
+      setScan(payload);
+      if (!projectName.trim()) {
+        setProjectName(payload.project.name);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Scan failed");
@@ -169,7 +150,11 @@ export function NewProjectPipelineClient() {
         }),
       });
 
-      const payload = (await response.json()) as { runId?: string; issuePageUrl?: string; error?: string };
+      const payload = (await response.json()) as {
+        runId?: string;
+        issuePageUrl?: string;
+        error?: string;
+      };
       if (!response.ok || !payload.runId || !payload.issuePageUrl) {
         throw new Error(payload.error ?? "Failed to start review");
       }
@@ -183,11 +168,14 @@ export function NewProjectPipelineClient() {
   };
 
   return (
-    <div className="mx-auto grid w-full max-w-5xl gap-6">
+    <div className="flex w-full flex-col gap-6">
       <section>
-        <h1 className="text-3xl font-bold text-slate-100">New Project Pipeline</h1>
+        <h1 className="text-3xl font-bold text-slate-100">
+          New Project Pipeline
+        </h1>
         <p className="mt-2 text-slate-400">
-          Upload or link source, run static scan, then confirm public URL to open the issues result page immediately.
+          Select or link a GitHub repository, run static + AI scan, then confirm
+          public URL to open the issues result page immediately.
         </p>
       </section>
 
@@ -201,7 +189,11 @@ export function NewProjectPipelineClient() {
             <Button
               type="button"
               variant={sourceType === "github-repos" ? "default" : "secondary"}
-              className={sourceType === "github-repos" ? "bg-blue-500 text-slate-950 hover:bg-blue-400" : "bg-slate-800 text-slate-100 hover:bg-slate-700"}
+              className={
+                sourceType === "github-repos"
+                  ? "bg-blue-500 text-slate-950 hover:bg-blue-400"
+                  : "bg-slate-800 text-slate-100 hover:bg-slate-700"
+              }
               onClick={() => setSourceType("github-repos")}
               disabled={busyScan}
             >
@@ -210,17 +202,12 @@ export function NewProjectPipelineClient() {
             </Button>
             <Button
               type="button"
-              variant={sourceType === "zip" ? "default" : "secondary"}
-              className={sourceType === "zip" ? "bg-blue-500 text-slate-950 hover:bg-blue-400" : "bg-slate-800 text-slate-100 hover:bg-slate-700"}
-              onClick={() => setSourceType("zip")}
-              disabled={busyScan}
-            >
-              ZIP Upload
-            </Button>
-            <Button
-              type="button"
               variant={sourceType === "github" ? "default" : "secondary"}
-              className={sourceType === "github" ? "bg-blue-500 text-slate-950 hover:bg-blue-400" : "bg-slate-800 text-slate-100 hover:bg-slate-700"}
+              className={
+                sourceType === "github"
+                  ? "bg-blue-500 text-slate-950 hover:bg-blue-400"
+                  : "bg-slate-800 text-slate-100 hover:bg-slate-700"
+              }
               onClick={() => setSourceType("github")}
               disabled={busyScan}
             >
@@ -249,22 +236,9 @@ export function NewProjectPipelineClient() {
             />
           )}
 
-          {sourceType === "zip" && (
-            <div className="grid gap-1.5">
-              <Label htmlFor="zipFile">Repository ZIP</Label>
-              <Input
-                id="zipFile"
-                type="file"
-                accept=".zip,application/zip"
-                onChange={(event) => setZipFile(event.target.files?.[0] ?? null)}
-                disabled={busyScan}
-              />
-            </div>
-          )}
-
           {sourceType === "github" && (
             <div className="grid gap-1.5">
-              <Label htmlFor="githubUrl">Public GitHub URL</Label>
+              <Label htmlFor="githubUrl">GitHub URL</Label>
               <Input
                 id="githubUrl"
                 value={githubUrl}
@@ -281,9 +255,7 @@ export function NewProjectPipelineClient() {
             onClick={() => void runScan()}
             disabled={
               busyScan ||
-              (sourceType === "zip" ? !zipFile :
-               sourceType === "github" ? !githubUrl.trim() :
-               !selectedRepo)
+              (sourceType === "github" ? !githubUrl.trim() : !selectedRepo)
             }
             className="bg-blue-500 text-slate-950 hover:bg-blue-400"
           >
@@ -301,28 +273,43 @@ export function NewProjectPipelineClient() {
             <div className="grid gap-2 md:grid-cols-4">
               <div className="rounded-lg border border-slate-800 bg-slate-800/30 p-3">
                 <p className="text-xs text-slate-400">Project</p>
-                <p className="text-sm font-medium text-slate-100">{scan.project.name}</p>
+                <p className="text-sm font-medium text-slate-100">
+                  {scan.project.name}
+                </p>
               </div>
               <div className="rounded-lg border border-slate-800 bg-slate-800/30 p-3">
                 <p className="text-xs text-slate-400">Framework</p>
-                <p className="text-sm font-medium text-slate-100">{scan.project.framework}</p>
+                <p className="text-sm font-medium text-slate-100">
+                  {scan.project.framework}
+                </p>
               </div>
               <div className="rounded-lg border border-slate-800 bg-slate-800/30 p-3">
                 <p className="text-xs text-slate-400">Routes</p>
-                <p className="text-sm font-medium text-slate-100">{scan.routes.length}</p>
+                <p className="text-sm font-medium text-slate-100">
+                  {scan.routes.length}
+                </p>
               </div>
               <div className="rounded-lg border border-slate-800 bg-slate-800/30 p-3">
                 <p className="text-xs text-slate-400">Score</p>
-                <p className="text-sm font-medium text-slate-100">{scan.summary.score}</p>
+                <p className="text-sm font-medium text-slate-100">
+                  {scan.summary.score}
+                </p>
               </div>
             </div>
 
             <div>
-              <p className="text-sm text-slate-300">Local findings ({localCards.length}) shown first in issues page.</p>
+              <p className="text-sm text-slate-300">
+                Local findings ({localCards.length}) shown first in issues page.
+              </p>
               <div className="mt-2 grid gap-2">
                 {localCards.slice(0, 6).map((card) => (
-                  <div key={card.id} className="rounded border border-slate-800 bg-slate-950/60 p-3">
-                    <p className="text-xs text-slate-500">{card.priority} • {card.category}</p>
+                  <div
+                    key={card.id}
+                    className="rounded border border-slate-800 bg-slate-950/60 p-3"
+                  >
+                    <p className="text-xs text-slate-500">
+                      {card.priority} • {card.category}
+                    </p>
                     <p className="text-sm text-slate-100">{card.title}</p>
                   </div>
                 ))}
@@ -334,7 +321,9 @@ export function NewProjectPipelineClient() {
 
       <Card className="border-slate-800 bg-slate-900/70">
         <CardHeader>
-          <CardTitle className="text-slate-100">2) Confirm Project and Start Review</CardTitle>
+          <CardTitle className="text-slate-100">
+            2) Confirm Project and Start Review
+          </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4">
           <div className="grid gap-1.5">

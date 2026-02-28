@@ -19,7 +19,11 @@ interface Props {
 
 type Status = "idle" | "loading" | "ready" | "error" | "no-token";
 
-export function GitHubRepoPicker({ onSelect, selectedFullName, triggerRefresh }: Props) {
+export function GitHubRepoPicker({
+  onSelect,
+  selectedFullName,
+  triggerRefresh,
+}: Props) {
   const [status, setStatus] = useState<Status>("idle");
   const [repos, setRepos] = useState<GitHubRepoItem[]>([]);
   const [query, setQuery] = useState("");
@@ -38,7 +42,10 @@ export function GitHubRepoPicker({ onSelect, selectedFullName, triggerRefresh }:
       const res = await fetch("/api/github/repos", {
         headers: { "x-github-token": token },
       });
-      const json = (await res.json()) as { data?: GitHubRepoItem[]; error?: string };
+      const json = (await res.json()) as {
+        data?: GitHubRepoItem[];
+        error?: string;
+      };
       if (!res.ok || !json.data) {
         throw new Error(json.error ?? "Failed to fetch repos");
       }
@@ -92,7 +99,9 @@ export function GitHubRepoPicker({ onSelect, selectedFullName, triggerRefresh }:
     return (
       <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-6 text-center">
         <Github className="mx-auto mb-3 h-8 w-8 text-slate-400" />
-        <p className="mb-1 text-sm font-medium text-slate-200">Connect your GitHub account</p>
+        <p className="mb-1 text-sm font-medium text-slate-200">
+          Connect your GitHub account
+        </p>
         <p className="mb-4 text-xs text-slate-400">
           Authorize the app once to browse and select your repositories.
         </p>
@@ -136,9 +145,11 @@ export function GitHubRepoPicker({ onSelect, selectedFullName, triggerRefresh }:
         />
       </div>
 
-      <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-700 bg-slate-900/60">
+      <div className="h-56 overflow-y-auto overflow-x-hidden rounded-lg border border-slate-700 bg-slate-900/60">
         {filtered.length === 0 ? (
-          <p className="px-4 py-6 text-center text-sm text-slate-400">No repositories found.</p>
+          <p className="px-4 py-6 text-center text-sm text-slate-400">
+            No repositories found.
+          </p>
         ) : (
           <ul>
             {filtered.map((repo) => {
@@ -149,9 +160,11 @@ export function GitHubRepoPicker({ onSelect, selectedFullName, triggerRefresh }:
                     type="button"
                     onClick={() => onSelect(repo)}
                     className={[
-                      "flex w-full items-start gap-3 px-4 py-3 text-left transition-colors",
+                      "flex w-full min-w-0 overflow-hidden items-start gap-3 px-4 py-3 text-left transition-colors",
                       "hover:bg-slate-800/60",
-                      isSelected ? "bg-blue-500/10 ring-1 ring-inset ring-blue-500/40" : "",
+                      isSelected
+                        ? "bg-blue-500/10 ring-1 ring-inset ring-blue-500/40"
+                        : "",
                     ].join(" ")}
                   >
                     {/* Lock / Unlock */}
@@ -163,7 +176,7 @@ export function GitHubRepoPicker({ onSelect, selectedFullName, triggerRefresh }:
                       )}
                     </span>
 
-                    <div className="min-w-0 flex-1">
+                    <div className="min-w-0 flex-1 overflow-hidden">
                       <div className="flex items-center gap-2">
                         <span className="truncate text-sm font-medium text-slate-100">
                           {repo.fullName}
@@ -175,7 +188,9 @@ export function GitHubRepoPicker({ onSelect, selectedFullName, triggerRefresh }:
                         )}
                       </div>
                       {repo.description && (
-                        <p className="mt-0.5 truncate text-xs text-slate-400">{repo.description}</p>
+                        <p className="mt-0.5 truncate text-xs text-slate-400">
+                          {repo.description}
+                        </p>
                       )}
                       <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-500">
                         {repo.language && <span>{repo.language}</span>}

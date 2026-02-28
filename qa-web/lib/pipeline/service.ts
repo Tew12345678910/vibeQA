@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import path from "node:path";
 
 import { z } from "zod";
 
@@ -142,13 +141,10 @@ type ReportResponse = {
 
 const BUCKET = process.env.SUPABASE_STORAGE_BUCKET ?? "qa-project-artifacts";
 
-const scanRequestSchema = z.object({
-  projectName: z.string().trim().min(1).max(120).optional(),
-});
-
 const githubScanRequestSchema = z.object({
   repoUrl: z.string().url(),
   projectName: z.string().trim().min(1).max(120).optional(),
+  githubToken: z.string().trim().min(1).optional(),
 });
 
 const confirmReviewRequestSchema = z.object({
@@ -289,11 +285,26 @@ function parseGithubRepoUrl(repoUrl: string): {
   };
 }
 
-async function downloadZip(url: string): Promise<Buffer> {
-  const response = await fetch(url, {
+function githubApiHeaders(githubToken: string): Record<string, string> {
+  return {
+    Authorization: `token ${githubToken}`,
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "QA-Pipeline-Scanner/1.0",
+  };
+}
+
+async function downloadZip(args: {
+  url: string;
+  authorizationHeader?: string;
+}): Promise<Buffer> {
+  const response = await fetch(args.url, {
     headers: {
       Accept: "application/zip",
       "User-Agent": "QA-Pipeline-Scanner/1.0",
+      ...(args.authorizationHeader
+        ? { Authorization: args.authorizationHeader }
+        : {}),
     },
     signal: AbortSignal.timeout(45_000),
   });
@@ -310,15 +321,73 @@ async function downloadZip(url: string): Promise<Buffer> {
   return Buffer.from(arrayBuffer);
 }
 
-async function downloadGithubArchive(repoUrl: string): Promise<Buffer> {
+async function resolveDefaultBranch(args: {
+  owner: string;
+  repo: string;
+  githubToken: string;
+}): Promise<string | null> {
+  const response = await fetch(
+    `https://api.github.com/repos/${args.owner}/${args.repo}`,
+    {
+      headers: githubApiHeaders(args.githubToken),
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
+  if (!response.ok) {
+    return null;
+  }
+
+  const body = (await response.json()) as { default_branch?: string };
+  return typeof body.default_branch === "string"
+    ? body.default_branch
+    : null;
+}
+
+async function downloadGithubArchive(
+  repoUrl: string,
+  githubToken?: string,
+): Promise<Buffer> {
   const parsed = parseGithubRepoUrl(repoUrl);
-  const branches = [parsed.branch, "main", "master"].filter(Boolean) as string[];
+  const branchCandidates = new Set<string>();
+  if (parsed.branch) {
+    branchCandidates.add(parsed.branch);
+  }
+
+  if (githubToken) {
+    const defaultBranch = await resolveDefaultBranch({
+      owner: parsed.owner,
+      repo: parsed.repo,
+      githubToken,
+    });
+    if (defaultBranch) {
+      branchCandidates.add(defaultBranch);
+    }
+  }
+
+  branchCandidates.add("main");
+  branchCandidates.add("master");
+
+  const branches = [...branchCandidates];
   let lastError = "Repository archive could not be downloaded";
+
+  if (githubToken) {
+    for (const branch of branches) {
+      const archiveUrl = `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/zipball/${encodeURIComponent(branch)}`;
+      try {
+        return await downloadZip({
+          url: archiveUrl,
+          authorizationHeader: `token ${githubToken}`,
+        });
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : lastError;
+      }
+    }
+  }
 
   for (const branch of branches) {
     const archiveUrl = `https://codeload.github.com/${parsed.owner}/${parsed.repo}/zip/refs/heads/${encodeURIComponent(branch)}`;
     try {
-      return await downloadZip(archiveUrl);
+      return await downloadZip({ url: archiveUrl });
     } catch (error) {
       lastError = error instanceof Error ? error.message : lastError;
     }
@@ -778,57 +847,10 @@ async function pollRemoteFindings(runState: RunState, scan: ScanState): Promise<
   };
 }
 
-function isValidZipName(fileName: string): boolean {
-  return /\.zip$/i.test(fileName);
-}
-
-export async function scanZipUpload(args: { file: File; projectName?: string }) {
-  const parsed = scanRequestSchema.parse({ projectName: args.projectName });
-
-  if (!isValidZipName(args.file.name)) {
-    throw new Error("Only .zip files are supported");
-  }
-  if (args.file.size <= 0) {
-    throw new Error("Uploaded ZIP is empty");
-  }
-  if (args.file.size > MAX_ZIP_BYTES) {
-    throw new Error(`ZIP exceeds max size ${Math.floor(MAX_ZIP_BYTES / (1024 * 1024))}MB`);
-  }
-
-  const zipBytes = Buffer.from(await args.file.arrayBuffer());
-  const state = await buildScanState({
-    zipBytes,
-    sourceLabel: args.file.name,
-    projectName: parsed.projectName,
-  });
-
-  return {
-    scanId: state.scanId,
-    project: {
-      name: state.project.name,
-      framework: state.project.framework,
-      router: state.project.router,
-    },
-    routes: state.routes,
-    endpointCount: state.endpointCount,
-    summary: state.summary,
-    report: {
-      id: state.scanId,
-      project: {
-        name: state.project.name,
-        framework: state.project.framework,
-      },
-      generated_at: state.generatedAt,
-      summary: state.summary,
-    },
-    cards: rankAndRenumber(state.localCards),
-  };
-}
-
 export async function scanGithubRepo(input: unknown) {
   const parsed = githubScanRequestSchema.parse(input);
-  const zipBytes = await downloadGithubArchive(parsed.repoUrl);
-  const guessedName = path.basename(parsed.repoUrl).replace(/\.git$/i, "").replace(/[^a-zA-Z0-9._-]/g, "");
+  const zipBytes = await downloadGithubArchive(parsed.repoUrl, parsed.githubToken);
+  const guessedName = parseGithubRepoUrl(parsed.repoUrl).repo;
 
   const state = await buildScanState({
     zipBytes,

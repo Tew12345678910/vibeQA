@@ -3,37 +3,55 @@
 Last verified against codebase: 2026-02-28.
 
 ## 1. Product Scope
-This project now runs a single pipeline only:
+This project now runs a single GitHub-first project creation pipeline:
 
-1. Source scan (`ZIP` or public GitHub URL)
-2. Show scan result to user
-3. User confirms project by entering a public HTTPS URL
-4. Redirect immediately to Issues result page
-5. Show findings one-by-one with ordering:
+1. Source scan from GitHub repository (`My Repositories` picker or GitHub URL)
+2. Run static scanner + AI codebase analysis
+3. Show scan result to user
+4. User confirms project by entering a public HTTPS URL
+5. Redirect immediately to Issues result page
+6. Show findings one-by-one with ordering:
    - local static scan findings first
    - nextjs-api/browser review findings second
+
+ZIP file upload is removed from the Create New Project flow.
 
 No legacy Project Auditor compatibility routes are part of this pipeline.
 
 ## 2. Main User Routes
-- `/projects/new` — unified source scan + confirm flow
+- `/projects/new` — unified GitHub source scan + confirm flow
+- `/auth/github-callback` — GitHub OAuth callback for repository access
 - `/issues?runId=<RUN-ID>` — issue result page for a run
 - `/` and `/dashboard` redirect to `/projects/new`
 
 ## 3. Required Environment Variables
 - `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` or `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`
 - `SUPABASE_SECRET_KEY` or `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_STORAGE_BUCKET` (optional, default: `qa-project-artifacts`)
 - `OPENAI_API_KEY` (optional fallback supported)
-- `OPENAI_MODEL` (optional)
+- `OPENAI_MODEL` (optional; default `gpt-4.1-mini`)
 - `BROWSER_USE_SERVER_BASE_URL` (optional; if missing, remote review is marked disabled)
 - `BROWSER_USE_SERVER_API_KEY` (optional)
 
-## 4. Storage (Supabase)
+## 4. GitHub Source Intake Flow
+1. User opens `/projects/new` and selects `My Repositories`.
+2. If no token is present, the UI starts Supabase GitHub OAuth with scopes:
+   - `read:user`
+   - `user:email`
+   - `repo`
+3. OAuth callback stores `github_provider_token` in `sessionStorage`.
+4. UI calls `GET /api/github/repos` with `x-github-token` to list accessible repositories (including private repos).
+5. User selects a repository (or provides a GitHub URL manually).
+6. UI calls `POST /api/pipeline/scans/github` with:
+   - `repoUrl`
+   - `projectName` (optional)
+
+## 5. Storage (Supabase)
 All pipeline artifacts are stored in Supabase Storage bucket `qa-project-artifacts` (or `SUPABASE_STORAGE_BUCKET`).
 
 ### Scan paths
-- `pipeline/scans/<scanId>/source.zip`
+- `pipeline/scans/<scanId>/source.zip` (internal GitHub archive snapshot)
 - `pipeline/scans/<scanId>/standards_scorecard.json`
 - `pipeline/scans/<scanId>/browser_use_test_plan.json`
 - `pipeline/scans/<scanId>/ai_report.md`
@@ -44,7 +62,7 @@ All pipeline artifacts are stored in Supabase Storage bucket `qa-project-artifac
 - `pipeline/runs/<runId>/browser_use_request.json`
 - `pipeline/runs/<runId>/browser_use_findings.json` (when remote review completes)
 
-## 5. Scanner Engine (Static + Safe)
+## 6. Scanner Engine (Static + Safe)
 Scanner is static-only and does not execute user code.
 
 Implemented checks include:
@@ -63,7 +81,13 @@ Implemented checks include:
   - requestId logging
   - pagination params + max-limit signals
 
-## 6. Browser Use Requirement Payload
+## 7. AI Codebase Analysis
+After static scan, an AI report is generated from scanned evidence (endpoints, checks, stack signals, UI routes).
+
+- Output artifact: `pipeline/scans/<scanId>/ai_report.md`
+- If `OPENAI_API_KEY` is missing or model call fails, fallback markdown is generated so pipeline still completes.
+
+## 8. Browser Use Requirement Payload
 `browser_use_test_plan.json` is generated from scan output and sent to Browser Use server when the project is confirmed.
 
 Shape:
@@ -84,7 +108,7 @@ Shape:
 }
 ```
 
-## 7. Browser Use Findings Contract
+## 9. Browser Use Findings Contract
 Remote findings use this schema:
 
 ```json
@@ -106,7 +130,7 @@ Remote findings use this schema:
 }
 ```
 
-## 8. Unified Issues API Response
+## 10. Unified Issues API Response
 Fetch-all-issues response format:
 
 ```json
@@ -132,17 +156,17 @@ Cards are always sorted as:
 1. `source: "local"`
 2. `source: "nextjs-api"`
 
-## 9. Active API Endpoints (Pipeline)
-- `POST /api/pipeline/scans/zip`
+## 11. Active API Endpoints (Pipeline + GitHub Source)
+- `GET /api/github/repos` (requires `x-github-token`)
 - `POST /api/pipeline/scans/github`
 - `GET /api/pipeline/scans/:scanId`
 - `POST /api/pipeline/reviews`
 - `GET /api/pipeline/issues/:runId`
 - `GET /api/issues?runId=<RUN-ID>` (fetch-all-issues contract)
 
-## 10. Local Run Checklist
+## 12. Local Run Checklist
 1. `pnpm install`
 2. Set required env vars in `.env.local`
 3. `pnpm dev`
 4. Open `http://localhost:3000/projects/new`
-5. Scan source, confirm URL, verify redirect to `/issues?runId=...`
+5. Connect GitHub, select repository, run scan, confirm URL, verify redirect to `/issues?runId=...`

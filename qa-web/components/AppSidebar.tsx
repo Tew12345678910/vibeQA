@@ -2,7 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FileWarning, LogIn, PlusCircle, Settings, UserCircle } from "lucide-react";
+import {
+  FileWarning,
+  LogIn,
+  PlusCircle,
+  Settings,
+  UserCircle,
+} from "lucide-react";
 
 import {
   Sidebar,
@@ -38,7 +44,9 @@ export function AppSidebar() {
                   <span className="text-sm font-bold">QA</span>
                 </div>
                 <div className="flex flex-col gap-0.5 leading-none">
-                  <span className="font-semibold text-slate-100">BrowserQA Pipeline</span>
+                  <span className="font-semibold text-slate-100">
+                    BrowserQA Pipeline
+                  </span>
                   <span className="text-xs text-slate-400">v2</span>
                 </div>
               </Link>
@@ -52,10 +60,15 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {navItems.map(({ href, label, icon: Icon }) => {
-                const active = pathname === href || pathname.startsWith(`${href}/`);
+                const active =
+                  pathname === href || pathname.startsWith(`${href}/`);
                 return (
                   <SidebarMenuItem key={href}>
-                    <SidebarMenuButton asChild isActive={active} tooltip={label}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={active}
+                      tooltip={label}
+                    >
                       <Link href={href}>
                         <Icon className="h-4 w-4" />
                         <span>{label}</span>

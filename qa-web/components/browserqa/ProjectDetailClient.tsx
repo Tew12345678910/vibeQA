@@ -138,7 +138,9 @@ export function ProjectDetailClient({ projectId }: Props) {
         </Button>
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-slate-100">{project.name}</h1>
+            <h1 className="text-2xl font-bold text-slate-100">
+              {project.name}
+            </h1>
             <div className="mt-1 flex flex-wrap items-center gap-3">
               {project.githubRepo ? (
                 <a
@@ -183,7 +185,11 @@ export function ProjectDetailClient({ projectId }: Props) {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatCard
             label="Latest Scan"
-            value={new Date(latest.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+            value={new Date(latest.createdAt).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            })}
             icon={<Clock className="h-4 w-4 text-slate-400" />}
           />
           <StatCard
@@ -194,12 +200,16 @@ export function ProjectDetailClient({ projectId }: Props) {
           <StatCard
             label="Critical (P0)"
             value={String(latest.counts.p0)}
-            className={latest.counts.p0 > 0 ? "border-red-500/30 bg-red-500/5" : ""}
+            className={
+              latest.counts.p0 > 0 ? "border-red-500/30 bg-red-500/5" : ""
+            }
           />
           <StatCard
             label="High (P1)"
             value={String(latest.counts.p1)}
-            className={latest.counts.p1 > 0 ? "border-amber-500/30 bg-amber-500/5" : ""}
+            className={
+              latest.counts.p1 > 0 ? "border-amber-500/30 bg-amber-500/5" : ""
+            }
           />
         </div>
       ) : null}
@@ -213,9 +223,12 @@ export function ProjectDetailClient({ projectId }: Props) {
         {runs.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-slate-700 py-16 text-slate-500">
             <Play className="h-12 w-12 text-slate-700" />
-            <p className="text-base font-semibold text-slate-300">No scans yet</p>
+            <p className="text-base font-semibold text-slate-300">
+              No scans yet
+            </p>
             <p className="text-sm">
-              Click <span className="text-emerald-400">New Scan</span> to analyse this project.
+              Click <span className="text-emerald-400">New Scan</span> to
+              analyse this project.
             </p>
           </div>
         ) : (
@@ -277,7 +290,13 @@ function RunCard({ run }: { run: RunRecord }) {
             )}
             <div>
               <p className="text-sm font-medium text-slate-100">
-                {new Date(run.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}
+                {new Date(run.createdAt).toLocaleString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
               </p>
               <p className="text-xs text-slate-500">
                 {run.counts.total} issue{run.counts.total !== 1 ? "s" : ""}

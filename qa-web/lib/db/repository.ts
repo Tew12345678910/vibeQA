@@ -94,7 +94,11 @@ export async function ensureSchema(): Promise<void> {
       .limit(1);
 
     if (error) {
-      if (/relation .* does not exist|Could not find the table/i.test(error.message)) {
+      if (
+        /relation .* does not exist|Could not find the table/i.test(
+          error.message,
+        )
+      ) {
         throw new Error(
           "Supabase tables are missing. Run the SQL in qa-web/supabase/migrations/20260228_audit_tables.sql first.",
         );
@@ -250,12 +254,15 @@ export async function updateRunWithCloudSnapshot(args: {
 
   if (updateError) throwDbError(updateError);
 
-  const [{ error: pageDeleteError }, { error: issueDeleteError }, { error: artifactDeleteError }] =
-    await Promise.all([
-      db.from("audit_page_results").delete().eq("audit_id", id),
-      db.from("audit_issues").delete().eq("audit_id", id),
-      db.from("audit_artifacts").delete().eq("audit_id", id),
-    ]);
+  const [
+    { error: pageDeleteError },
+    { error: issueDeleteError },
+    { error: artifactDeleteError },
+  ] = await Promise.all([
+    db.from("audit_page_results").delete().eq("audit_id", id),
+    db.from("audit_issues").delete().eq("audit_id", id),
+    db.from("audit_artifacts").delete().eq("audit_id", id),
+  ]);
 
   if (pageDeleteError) throwDbError(pageDeleteError);
   if (issueDeleteError) throwDbError(issueDeleteError);
@@ -596,7 +603,9 @@ export async function insertProjectRun(run: {
   }
 }
 
-export async function listProjectRuns(projectId: string): Promise<ProjectRunRow[]> {
+export async function listProjectRuns(
+  projectId: string,
+): Promise<ProjectRunRow[]> {
   const db = getDbClient();
 
   const { data: runs, error: runsError } = await db
@@ -627,4 +636,3 @@ export async function listProjectRuns(projectId: string): Promise<ProjectRunRow[
     issues: issuesByRun.get(r.id) ?? [],
   }));
 }
-

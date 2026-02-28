@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server";
 
-import {
-  upsertProject,
-  listProjects,
-} from "@/lib/db/repository";
+import { upsertProject, listProjects } from "@/lib/db/repository";
 
 export async function GET() {
   try {
@@ -11,7 +8,10 @@ export async function GET() {
     return NextResponse.json({ projects });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to list projects" },
+      {
+        error:
+          error instanceof Error ? error.message : "Failed to list projects",
+      },
       { status: 500 },
     );
   }
@@ -49,7 +49,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true }, { status: 201 });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to save project" },
+      {
+        error:
+          error instanceof Error ? error.message : "Failed to save project",
+      },
       { status: 500 },
     );
   }

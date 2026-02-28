@@ -351,7 +351,11 @@ export function ProjectRunClient({ projectId }: Props) {
                 className="h-7 border-slate-700 bg-slate-900 text-xs text-slate-100 placeholder:text-slate-600"
               />
               {repoInput.trim() ? (
-                <Button size="sm" onClick={saveRepo} className="h-6 bg-emerald-600 px-2 text-xs hover:bg-emerald-500">
+                <Button
+                  size="sm"
+                  onClick={saveRepo}
+                  className="h-6 bg-emerald-600 px-2 text-xs hover:bg-emerald-500"
+                >
                   <Check className="mr-1 h-3 w-3" /> Save
                 </Button>
               ) : null}
@@ -373,16 +377,31 @@ export function ProjectRunClient({ projectId }: Props) {
                 onChange={(e) => setUrlInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") saveUrl();
-                  if (e.key === "Escape") { setEditingUrl(false); setUrlInput(""); }
+                  if (e.key === "Escape") {
+                    setEditingUrl(false);
+                    setUrlInput("");
+                  }
                 }}
                 placeholder="https://yoursite.com"
                 className="h-7 border-slate-700 bg-slate-900 text-xs text-slate-100 placeholder:text-slate-600"
               />
               <div className="flex gap-1">
-                <Button size="sm" onClick={saveUrl} className="h-6 flex-1 bg-emerald-600 px-2 text-xs hover:bg-emerald-500">
+                <Button
+                  size="sm"
+                  onClick={saveUrl}
+                  className="h-6 flex-1 bg-emerald-600 px-2 text-xs hover:bg-emerald-500"
+                >
                   <Check className="mr-1 h-3 w-3" /> Save
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => { setEditingUrl(false); setUrlInput(""); }} className="h-6 px-2 text-xs text-slate-400 hover:text-slate-100">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setEditingUrl(false);
+                    setUrlInput("");
+                  }}
+                  className="h-6 px-2 text-xs text-slate-400 hover:text-slate-100"
+                >
                   <X className="h-3 w-3" />
                 </Button>
               </div>
@@ -399,8 +418,12 @@ export function ProjectRunClient({ projectId }: Props) {
                 {project.websiteUrl}
               </a>
               <button
+                title="Edit URL"
                 type="button"
-                onClick={() => { setUrlInput(project.websiteUrl ?? ""); setEditingUrl(true); }}
+                onClick={() => {
+                  setUrlInput(project.websiteUrl ?? "");
+                  setEditingUrl(true);
+                }}
                 className="mt-2 shrink-0 text-slate-600 opacity-0 transition-opacity hover:text-slate-300 group-hover:opacity-100"
               >
                 <Pencil className="h-3.5 w-3.5" />
@@ -521,8 +544,8 @@ export function ProjectRunClient({ projectId }: Props) {
                 No issues yet
               </p>
               <p className="text-sm">
-                Press the green{" "}
-                <span className="text-emerald-400">Scan</span> button to start.
+                Press the green <span className="text-emerald-400">Scan</span>{" "}
+                button to start.
               </p>
             </div>
           ) : (

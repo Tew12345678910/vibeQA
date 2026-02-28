@@ -79,8 +79,7 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json(
       {
-        error:
-          error instanceof Error ? error.message : "Browser scan failed",
+        error: error instanceof Error ? error.message : "Browser scan failed",
       },
       { status: 500 },
     );

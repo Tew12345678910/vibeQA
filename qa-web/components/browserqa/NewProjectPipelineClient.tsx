@@ -68,7 +68,13 @@ export function NewProjectPipelineClient() {
         githubRepo: resolvedGithubRepo || undefined,
         websiteUrl: websiteUrl.trim() || undefined,
         baseUrl: websiteUrl.trim() || resolvedGithubRepo || "",
-        focus: ["usability", "accessibility", "security", "content", "functional"],
+        focus: [
+          "usability",
+          "accessibility",
+          "security",
+          "content",
+          "functional",
+        ],
       });
 
       // Persist to Supabase (best-effort — does not block navigation)
@@ -99,7 +105,8 @@ export function NewProjectPipelineClient() {
       <section>
         <h1 className="text-3xl font-bold text-slate-100">New Project</h1>
         <p className="mt-2 text-slate-400">
-          Add a GitHub repository, a website URL, or both to create your project.
+          Add a GitHub repository, a website URL, or both to create your
+          project.
         </p>
       </section>
 
@@ -126,7 +133,9 @@ export function NewProjectPipelineClient() {
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <Github className="h-4 w-4 text-slate-400" />
-              <Label className="text-slate-300">GitHub Repository (optional)</Label>
+              <Label className="text-slate-300">
+                GitHub Repository (optional)
+              </Label>
             </div>
 
             <div className="flex gap-2">

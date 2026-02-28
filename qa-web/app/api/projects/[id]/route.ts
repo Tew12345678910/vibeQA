@@ -16,7 +16,10 @@ export async function PATCH(request: Request, context: Context) {
     return NextResponse.json({ ok: true });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to update project" },
+      {
+        error:
+          error instanceof Error ? error.message : "Failed to update project",
+      },
       { status: 500 },
     );
   }
@@ -29,7 +32,10 @@ export async function DELETE(_: Request, context: Context) {
     return NextResponse.json({ ok: true });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to delete project" },
+      {
+        error:
+          error instanceof Error ? error.message : "Failed to delete project",
+      },
       { status: 500 },
     );
   }

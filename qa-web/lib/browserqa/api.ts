@@ -32,8 +32,29 @@ export async function fetchAudits(query: ListQuery = {}): Promise<AuditListRespo
   const response = await fetch(`/api/audits${buildQuery(query)}`, {
     cache: "no-store",
   });
-  const payload = (await response.json()) as AuditListResponse | { error?: string };
-  if (!response.ok || !("items" in payload)) {
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      return { items: [], nextCursor: null };
+    }
+    let errorMessage = "Failed to fetch audits";
+    try {
+      const payload = (await response.json()) as { error?: string };
+      errorMessage = payload.error ?? errorMessage;
+    } catch {
+      // Response body is not JSON (e.g. HTML error page)
+    }
+    throw new Error(errorMessage);
+  }
+
+  let payload: AuditListResponse | { error?: string };
+  try {
+    payload = (await response.json()) as AuditListResponse | { error?: string };
+  } catch {
+    return { items: [], nextCursor: null };
+  }
+
+  if (!("items" in payload)) {
     throw new Error((payload as { error?: string }).error ?? "Failed to fetch audits");
   }
   return payload;
@@ -43,8 +64,26 @@ export async function fetchAudit(auditId: string): Promise<AuditStatusResponse> 
   const response = await fetch(`/api/audits/${auditId}`, {
     cache: "no-store",
   });
-  const payload = (await response.json()) as AuditStatusResponse | { error?: string };
-  if (!response.ok || !("auditId" in payload)) {
+
+  if (!response.ok) {
+    let errorMessage = "Failed to fetch audit";
+    try {
+      const payload = (await response.json()) as { error?: string };
+      errorMessage = payload.error ?? errorMessage;
+    } catch {
+      // Response body is not JSON
+    }
+    throw new Error(errorMessage);
+  }
+
+  let payload: AuditStatusResponse | { error?: string };
+  try {
+    payload = (await response.json()) as AuditStatusResponse | { error?: string };
+  } catch {
+    throw new Error("Failed to fetch audit: invalid response");
+  }
+
+  if (!("auditId" in payload)) {
     throw new Error((payload as { error?: string }).error ?? "Failed to fetch audit");
   }
   return payload;
@@ -87,8 +126,14 @@ export async function cancelAudit(auditId: string): Promise<void> {
     method: "POST",
   });
 
-  const payload = (await response.json()) as { error?: string };
   if (!response.ok) {
-    throw new Error(payload.error ?? "Failed to cancel audit");
+    let errorMessage = "Failed to cancel audit";
+    try {
+      const payload = (await response.json()) as { error?: string };
+      errorMessage = payload.error ?? errorMessage;
+    } catch {
+      // Response body is not JSON
+    }
+    throw new Error(errorMessage);
   }
 }

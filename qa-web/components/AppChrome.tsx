@@ -1,5 +1,7 @@
 "use client";
 
+import { usePathname } from "next/navigation";
+
 import { AppSidebar } from "@/components/AppSidebar";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -13,6 +15,13 @@ type AppChromeProps = {
 };
 
 export function AppChrome({ children }: AppChromeProps) {
+  const pathname = usePathname();
+
+  // Landing page renders full-screen without the app shell
+  if (pathname === "/") {
+    return <>{children}</>;
+  }
+
   return (
     <SidebarProvider>
       <AppSidebar />

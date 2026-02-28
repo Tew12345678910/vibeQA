@@ -39,33 +39,6 @@ function parseTextResponse(payload: Record<string, unknown>): string {
     if (typeof content === "string") return content.trim();
   }
 
-  const output = payload.output;
-  if (Array.isArray(output)) {
-    const text = output
-      .flatMap((item) => {
-        const row = item as Record<string, unknown>;
-        const content = row.content;
-        return Array.isArray(content) ? content : [];
-      })
-      .map((item) => {
-        const row = item as Record<string, unknown>;
-        if (row.type === "output_text" && typeof row.text === "string") {
-          return row.text;
-        }
-        return "";
-      })
-      .filter(Boolean)
-      .join("\n")
-      .trim();
-
-    if (text) return text;
-  }
-
-  const text = payload.text;
-  if (typeof text === "string") {
-    return text.trim();
-  }
-
   return "";
 }
 
@@ -84,16 +57,7 @@ function parseEmbedding(payload: Record<string, unknown>): number[] {
     }
   }
 
-  const vectors = payload.vectors;
-  if (Array.isArray(vectors) && vectors.length > 0) {
-    const first = vectors[0] as Record<string, unknown>;
-    const embedding = first.embedding ?? first.vector;
-    if (Array.isArray(embedding)) {
-      return embedding.map((v) => Number(v));
-    }
-  }
-
-  throw new Error("AI embedding response did not contain vectors");
+  throw new Error("AI embedding response did not contain a valid embedding");
 }
 
 async function withTimeout(

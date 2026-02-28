@@ -57,6 +57,7 @@ type GithubScanResponse = {
   runId?: string | null;
   status?: string;
   commitSha?: string;
+  indexedFiles?: number;
   counts?: { p0: number; p1: number; p2: number; total: number };
   endpointCount?: number;
   project?: {
@@ -559,6 +560,7 @@ export function ProjectRunClient({ projectId }: Props) {
 
     const collected: IssueCard[] = [];
     let latestAnalysis = project.analysis;
+    let githubPayload: GithubScanResponse | null = null;
     const runId = makeRunId();
     const createdAt = new Date().toISOString();
 
@@ -631,14 +633,19 @@ export function ProjectRunClient({ projectId }: Props) {
               const snapshot = await fetchRunSnapshot();
               if (snapshot) {
                 replaceWithSnapshotIssues(snapshot);
-                const processed = Number(snapshot.run.meta?.processed_chunks ?? 0);
+                const processed = Number(
+                  snapshot.run.meta?.processed_chunks ?? 0,
+                );
                 const total = Number(snapshot.run.meta?.total_chunks ?? 0);
                 setScanStatus(
                   total > 0
                     ? `Scanning repository… ${processed}/${total} chunks`
                     : "Scanning repository…",
                 );
-                if (snapshot.status === "completed" || snapshot.status === "failed") {
+                if (
+                  snapshot.status === "completed" ||
+                  snapshot.status === "failed"
+                ) {
                   break;
                 }
               }
@@ -671,28 +678,29 @@ export function ProjectRunClient({ projectId }: Props) {
         }
 
         const payload = (await res.json()) as GithubScanResponse;
+        githubPayload = payload;
         const finalSnapshot = await fetchRunSnapshot();
         if (finalSnapshot) {
           replaceWithSnapshotIssues(finalSnapshot);
-          const snapshotIssues: IssueCard[] = finalSnapshot.issues.map((issue) => ({
-            id: issue.issue_id,
-            source:
-              issue.source === "browser"
-                ? ("browser" as const)
-                : ("github" as const),
-            title: issue.title,
-            priority: issue.priority,
-            category: issue.category,
-            description: issue.description ?? undefined,
-            cardJson: issue.card_json ?? undefined,
-            filePath: issue.file_path ?? undefined,
-            endpoint: issue.endpoint ?? undefined,
-            confidence: issue.confidence ?? undefined,
-            state: issue.state ?? undefined,
-          }));
-          collected.push(
-            ...snapshotIssues,
+          const snapshotIssues: IssueCard[] = finalSnapshot.issues.map(
+            (issue) => ({
+              id: issue.issue_id,
+              source:
+                issue.source === "browser"
+                  ? ("browser" as const)
+                  : ("github" as const),
+              title: issue.title,
+              priority: issue.priority,
+              category: issue.category,
+              description: issue.description ?? undefined,
+              cardJson: issue.card_json ?? undefined,
+              filePath: issue.file_path ?? undefined,
+              endpoint: issue.endpoint ?? undefined,
+              confidence: issue.confidence ?? undefined,
+              state: issue.state ?? undefined,
+            }),
           );
+          collected.push(...snapshotIssues);
         } else {
           const githubIssues: IssueCard[] = payload.cards.map((c) => ({
             id: c.id,
@@ -818,7 +826,11 @@ export function ProjectRunClient({ projectId }: Props) {
       }).catch(() => {});
 
       setScanStatus(
-        dedupedIssues.length === 0 ? "No issues found" : "Scan complete",
+        githubPayload !== null && githubPayload.indexedFiles === 0
+          ? "No server/API code found in this repository — nothing to audit"
+          : dedupedIssues.length === 0
+            ? "No issues found"
+            : "Scan complete",
       );
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
@@ -870,243 +882,251 @@ export function ProjectRunClient({ projectId }: Props) {
       <aside className="flex w-64 shrink-0 flex-col overflow-hidden border-r border-slate-800 bg-slate-950/60">
         <ScrollArea className="flex-1">
           <div className="flex flex-col gap-6 p-5">
-        <div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => router.push(`/projects/${projectId}`)}
-            className="mb-4 -ml-2 text-slate-400 hover:text-slate-100"
-          >
-            <ArrowLeft className="mr-1.5 h-4 w-4" />
-            {project.name}
-          </Button>
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            Current Scan
-          </p>
-        </div>
-
-        {/* GitHub repo */}
-        <div className="space-y-1.5">
-          <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
-            <Github className="h-3.5 w-3.5" />
-            Repository
-          </p>
-          {project.githubRepo ? (
-            <a
-              href={project.githubRepo}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 break-all rounded-md border border-slate-800 bg-slate-900/60 p-2.5 text-xs text-blue-400 hover:text-blue-300 hover:underline"
-            >
-              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-              {project.githubRepo.replace("https://github.com/", "")}
-            </a>
-          ) : (
-            <div className="flex flex-col gap-1.5">
-              <Input
-                value={repoInput}
-                onChange={(e) => setRepoInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") saveRepo();
-                  if (e.key === "Escape") setRepoInput("");
-                }}
-                placeholder="owner/repo or GitHub URL"
-                className="h-7 border-slate-700 bg-slate-900 text-xs text-slate-100 placeholder:text-slate-600"
-              />
-              {repoInput.trim() ? (
-                <Button
-                  size="sm"
-                  onClick={saveRepo}
-                  className="h-6 bg-emerald-600 px-2 text-xs hover:bg-emerald-500"
-                >
-                  <Check className="mr-1 h-3 w-3" /> Save
-                </Button>
-              ) : null}
+            <div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => router.push(`/projects/${projectId}`)}
+                className="mb-4 -ml-2 text-slate-400 hover:text-slate-100"
+              >
+                <ArrowLeft className="mr-1.5 h-4 w-4" />
+                {project.name}
+              </Button>
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                Current Scan
+              </p>
             </div>
-          )}
-        </div>
 
-        {/* Website URL */}
-        <div className="space-y-1.5">
-          <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
-            <Globe className="h-3.5 w-3.5" />
-            Website
-          </p>
-          {editingUrl ? (
-            <div className="flex flex-col gap-1.5">
-              <Input
-                autoFocus
-                value={urlInput}
-                onChange={(e) => setUrlInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") saveUrl();
-                  if (e.key === "Escape") {
-                    setEditingUrl(false);
-                    setUrlInput("");
-                  }
-                }}
-                placeholder="https://yoursite.com"
-                className="h-7 border-slate-700 bg-slate-900 text-xs text-slate-100 placeholder:text-slate-600"
-              />
-              <div className="flex gap-1">
-                <Button
-                  size="sm"
-                  onClick={saveUrl}
-                  className="h-6 flex-1 bg-emerald-600 px-2 text-xs hover:bg-emerald-500"
+            {/* GitHub repo */}
+            <div className="space-y-1.5">
+              <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
+                <Github className="h-3.5 w-3.5" />
+                Repository
+              </p>
+              {project.githubRepo ? (
+                <a
+                  href={project.githubRepo}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 break-all rounded-md border border-slate-800 bg-slate-900/60 p-2.5 text-xs text-blue-400 hover:text-blue-300 hover:underline"
                 >
-                  <Check className="mr-1 h-3 w-3" /> Save
-                </Button>
+                  <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                  {project.githubRepo.replace("https://github.com/", "")}
+                </a>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  <Input
+                    value={repoInput}
+                    onChange={(e) => setRepoInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") saveRepo();
+                      if (e.key === "Escape") setRepoInput("");
+                    }}
+                    placeholder="owner/repo or GitHub URL"
+                    className="h-7 border-slate-700 bg-slate-900 text-xs text-slate-100 placeholder:text-slate-600"
+                  />
+                  {repoInput.trim() ? (
+                    <Button
+                      size="sm"
+                      onClick={saveRepo}
+                      className="h-6 bg-emerald-600 px-2 text-xs hover:bg-emerald-500"
+                    >
+                      <Check className="mr-1 h-3 w-3" /> Save
+                    </Button>
+                  ) : null}
+                </div>
+              )}
+            </div>
+
+            {/* Website URL */}
+            <div className="space-y-1.5">
+              <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
+                <Globe className="h-3.5 w-3.5" />
+                Website
+              </p>
+              {editingUrl ? (
+                <div className="flex flex-col gap-1.5">
+                  <Input
+                    autoFocus
+                    value={urlInput}
+                    onChange={(e) => setUrlInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") saveUrl();
+                      if (e.key === "Escape") {
+                        setEditingUrl(false);
+                        setUrlInput("");
+                      }
+                    }}
+                    placeholder="https://yoursite.com"
+                    className="h-7 border-slate-700 bg-slate-900 text-xs text-slate-100 placeholder:text-slate-600"
+                  />
+                  <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      onClick={saveUrl}
+                      className="h-6 flex-1 bg-emerald-600 px-2 text-xs hover:bg-emerald-500"
+                    >
+                      <Check className="mr-1 h-3 w-3" /> Save
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setEditingUrl(false);
+                        setUrlInput("");
+                      }}
+                      className="h-6 px-2 text-xs text-slate-400 hover:text-slate-100"
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              ) : project.websiteUrl ? (
+                <div className="group flex items-start gap-1.5">
+                  <a
+                    href={project.websiteUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex min-w-0 flex-1 items-center gap-1.5 break-all rounded-md border border-slate-800 bg-slate-900/60 p-2.5 text-xs text-blue-400 hover:text-blue-300 hover:underline"
+                  >
+                    <Link2 className="h-3.5 w-3.5 shrink-0" />
+                    {project.websiteUrl}
+                  </a>
+                  <button
+                    title="Edit URL"
+                    type="button"
+                    onClick={() => {
+                      setUrlInput(project.websiteUrl ?? "");
+                      setEditingUrl(true);
+                    }}
+                    className="mt-2 shrink-0 text-slate-600 opacity-0 transition-opacity hover:text-slate-300 group-hover:opacity-100"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setEditingUrl(true)}
+                  className="flex w-full items-center gap-1.5 rounded-md border border-dashed border-slate-700 p-2.5 text-xs text-slate-500 transition-colors hover:border-slate-500 hover:text-slate-300"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add website URL
+                </button>
+              )}
+            </div>
+
+            {/* Project analysis */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Project Analysis
+                </p>
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => {
-                    setEditingUrl(false);
-                    setUrlInput("");
-                  }}
-                  className="h-6 px-2 text-xs text-slate-400 hover:text-slate-100"
+                  disabled={!project.githubRepo || analysisBusy || scanning}
+                  onClick={() =>
+                    void runProjectAnalysis({ reason: "manual" }).catch(
+                      () => {},
+                    )
+                  }
+                  className="h-6 px-2 text-[11px] text-slate-400 hover:text-slate-100"
                 >
-                  <X className="h-3 w-3" />
+                  <RefreshCw
+                    className={`mr-1 h-3 w-3 ${analysisBusy ? "animate-spin" : ""}`}
+                  />
+                  {analysisBusy ? "Scanning…" : "Scan"}
                 </Button>
               </div>
-            </div>
-          ) : project.websiteUrl ? (
-            <div className="group flex items-start gap-1.5">
-              <a
-                href={project.websiteUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex min-w-0 flex-1 items-center gap-1.5 break-all rounded-md border border-slate-800 bg-slate-900/60 p-2.5 text-xs text-blue-400 hover:text-blue-300 hover:underline"
-              >
-                <Link2 className="h-3.5 w-3.5 shrink-0" />
-                {project.websiteUrl}
-              </a>
-              <button
-                title="Edit URL"
-                type="button"
-                onClick={() => {
-                  setUrlInput(project.websiteUrl ?? "");
-                  setEditingUrl(true);
-                }}
-                className="mt-2 shrink-0 text-slate-600 opacity-0 transition-opacity hover:text-slate-300 group-hover:opacity-100"
-              >
-                <Pencil className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setEditingUrl(true)}
-              className="flex w-full items-center gap-1.5 rounded-md border border-dashed border-slate-700 p-2.5 text-xs text-slate-500 transition-colors hover:border-slate-500 hover:text-slate-300"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Add website URL
-            </button>
-          )}
-        </div>
 
-        {/* Project analysis */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-              Project Analysis
-            </p>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={!project.githubRepo || analysisBusy || scanning}
-              onClick={() =>
-                void runProjectAnalysis({ reason: "manual" }).catch(() => {})
-              }
-              className="h-6 px-2 text-[11px] text-slate-400 hover:text-slate-100"
-            >
-              <RefreshCw
-                className={`mr-1 h-3 w-3 ${analysisBusy ? "animate-spin" : ""}`}
-              />
-              {analysisBusy ? "Scanning…" : "Scan"}
-            </Button>
-          </div>
-
-          {analysisStatus ? (
-            <p className="text-[11px] text-slate-500">{analysisStatus}</p>
-          ) : project.analysis?.analyzedAt ? (
-            <p className="text-[11px] text-slate-500">
-              Last updated{" "}
-              {new Date(project.analysis.analyzedAt).toLocaleString()}
-            </p>
-          ) : null}
-
-          {analysisFramework ? (
-            <div className="rounded-md border border-slate-800 bg-slate-900/60 px-2.5 py-2 text-xs text-blue-300">
-              <p className="flex items-center gap-1.5">
-                {frameworkIcon ? (
-                  <Image
-                    src={frameworkIcon.src}
-                    alt={frameworkIcon.alt}
-                    width={14}
-                    height={14}
-                  />
-                ) : (
-                  <Code2 className="h-3.5 w-3.5" />
-                )}
-                <span>Framework: {analysisFramework}</span>
-              </p>
-              {project.analysis?.router &&
-              project.analysis.router !== "unknown" ? (
-                <p className="mt-1 text-[11px] text-slate-400">
-                  Router: {project.analysis.router}
+              {analysisStatus ? (
+                <p className="text-[11px] text-slate-500">{analysisStatus}</p>
+              ) : project.analysis?.analyzedAt ? (
+                <p className="text-[11px] text-slate-500">
+                  Last updated{" "}
+                  {new Date(project.analysis.analyzedAt).toLocaleString()}
                 </p>
               ) : null}
-            </div>
-          ) : (
-            <p className="rounded-md border border-dashed border-slate-700 px-2.5 py-2 text-xs text-slate-500">
-              Framework will be detected after GitHub analysis.
-            </p>
-          )}
 
-          {routeTree.length > 0 ? (
-            <div className="rounded-md border border-slate-800 bg-slate-900/60 p-2">
-              <RouteTreeView nodes={routeTree} />
-            </div>
-          ) : (
-            <p className="text-[11px] leading-relaxed text-slate-500">
-              No route/page analysis is available yet.
-            </p>
-          )}
-        </div>
+              {analysisFramework ? (
+                <div className="rounded-md border border-slate-800 bg-slate-900/60 px-2.5 py-2 text-xs text-blue-300">
+                  <p className="flex items-center gap-1.5">
+                    {frameworkIcon ? (
+                      <Image
+                        src={frameworkIcon.src}
+                        alt={frameworkIcon.alt}
+                        width={14}
+                        height={14}
+                      />
+                    ) : (
+                      <Code2 className="h-3.5 w-3.5" />
+                    )}
+                    <span>Framework: {analysisFramework}</span>
+                  </p>
+                  {project.analysis?.router &&
+                  project.analysis.router !== "unknown" ? (
+                    <p className="mt-1 text-[11px] text-slate-400">
+                      Router: {project.analysis.router}
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="rounded-md border border-dashed border-slate-700 px-2.5 py-2 text-xs text-slate-500">
+                  Framework will be detected after GitHub analysis.
+                </p>
+              )}
 
-        {/* This scan summary */}
-        {issues.length > 0 ? (
-          <div className="space-y-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-              This Scan
-            </p>
-            <div className="grid grid-cols-3 gap-1.5">
-              {(["P0", "P1", "P2"] as const).map((p) => {
-                const count =
-                  p === "P0" ? p0.length : p === "P1" ? p1.length : p2.length;
-                return (
-                  <div
-                    key={p}
-                    className={`rounded-md border p-2 text-center text-xs ${priorityColors[p]}`}
-                  >
-                    <p className="text-base font-bold leading-none">{count}</p>
-                    <p className="mt-0.5 opacity-80">{p}</p>
-                  </div>
-                );
-              })}
+              {routeTree.length > 0 ? (
+                <div className="rounded-md border border-slate-800 bg-slate-900/60 p-2">
+                  <RouteTreeView nodes={routeTree} />
+                </div>
+              ) : (
+                <p className="text-[11px] leading-relaxed text-slate-500">
+                  No route/page analysis is available yet.
+                </p>
+              )}
             </div>
 
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={clearIssues}
-              className="w-full text-slate-500 hover:text-red-300"
-            >
-              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-              Clear
-            </Button>
-          </div>
-        ) : null}
+            {/* This scan summary */}
+            {issues.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  This Scan
+                </p>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {(["P0", "P1", "P2"] as const).map((p) => {
+                    const count =
+                      p === "P0"
+                        ? p0.length
+                        : p === "P1"
+                          ? p1.length
+                          : p2.length;
+                    return (
+                      <div
+                        key={p}
+                        className={`rounded-md border p-2 text-center text-xs ${priorityColors[p]}`}
+                      >
+                        <p className="text-base font-bold leading-none">
+                          {count}
+                        </p>
+                        <p className="mt-0.5 opacity-80">{p}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearIssues}
+                  className="w-full text-slate-500 hover:text-red-300"
+                >
+                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                  Clear
+                </Button>
+              </div>
+            ) : null}
           </div>
         </ScrollArea>
       </aside>
@@ -1265,29 +1285,29 @@ export function ProjectRunClient({ projectId }: Props) {
 
         <ScrollArea className="flex-1">
           <div className="p-6">
-          {scanning && issues.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-4 py-20 text-slate-400">
-              <Loader2 className="h-10 w-10 animate-spin text-emerald-400" />
-              <p className="text-sm">{scanStatus ?? "Running scan…"}</p>
-            </div>
-          ) : issues.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-4 py-20 text-slate-500">
-              <Play className="h-12 w-12 text-slate-700" />
-              <p className="text-lg font-semibold text-slate-300">
-                No issues yet
-              </p>
-              <p className="text-sm">
-                Press the green <span className="text-emerald-400">Scan</span>{" "}
-                button to start.
-              </p>
-            </div>
-          ) : (
-            <div className="columns-1 gap-4 sm:columns-2 xl:columns-3">
-              {issues.map((issue) => (
-                <IssueCardItem key={issue.id} issue={issue} />
-              ))}
-            </div>
-          )}
+            {scanning && issues.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-4 py-20 text-slate-400">
+                <Loader2 className="h-10 w-10 animate-spin text-emerald-400" />
+                <p className="text-sm">{scanStatus ?? "Running scan…"}</p>
+              </div>
+            ) : issues.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-4 py-20 text-slate-500">
+                <Play className="h-12 w-12 text-slate-700" />
+                <p className="text-lg font-semibold text-slate-300">
+                  No issues yet
+                </p>
+                <p className="text-sm">
+                  Press the green <span className="text-emerald-400">Scan</span>{" "}
+                  button to start.
+                </p>
+              </div>
+            ) : (
+              <div className="columns-1 gap-4 sm:columns-2 xl:columns-3">
+                {issues.map((issue) => (
+                  <IssueCardItem key={issue.id} issue={issue} />
+                ))}
+              </div>
+            )}
           </div>
         </ScrollArea>
       </div>
@@ -1307,7 +1327,9 @@ function IssueCardItem({ issue }: { issue: IssueCard }) {
     Array.isArray((issue.cardJson.problem as { evidence?: unknown[] }).evidence)
       ? (() => {
           const first = (issue.cardJson.problem as { evidence: unknown[] })
-            .evidence[0] as { path?: unknown; line_start?: unknown; line_end?: unknown } | undefined;
+            .evidence[0] as
+            | { path?: unknown; line_start?: unknown; line_end?: unknown }
+            | undefined;
           if (!first || typeof first.path !== "string") return undefined;
           const lineStart = Number(first.line_start ?? 1);
           const lineEnd = Number(first.line_end ?? lineStart);

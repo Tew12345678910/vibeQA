@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 
 import { getDbClient } from "@/lib/db/client";
-import { embedText, generateIssueCard } from "@/lib/ai/minimax";
+import { embedText, generateIssueCard } from "@/lib/ai/openai";
 
 type RuleRow = {
   id: string;
@@ -119,6 +119,8 @@ type IndexRepoResult = {
   endpointCount: number;
   routes: string[];
   routeInsights: RouteInsight[];
+  /** Number of source files indexed into code_chunks for this commit. */
+  indexedFileCount: number;
 };
 
 type AuditRepoInput = {
@@ -134,6 +136,8 @@ type AuditRepoOutput = {
   repoFull: string;
   commitSha: string;
   endpointCount: number;
+  /** Number of source files that were indexed into code_chunks. */
+  indexedFileCount: number;
   routes: string[];
   routeInsights: RouteInsight[];
   cards: Array<{
@@ -335,21 +339,87 @@ function isSourceCandidate(filePath: string): boolean {
   if (!allowExt.has(ext)) return false;
 
   const lower = filePath.toLowerCase();
-  return (
-    lower.includes("/api/") ||
-    lower.includes("controller") ||
-    lower.includes("middleware") ||
-    lower.includes("guard") ||
-    lower.includes("auth") ||
-    lower.includes("validator") ||
-    lower.includes("schema") ||
-    lower.includes("dto") ||
-    lower.includes("router") ||
-    lower.includes("server") ||
+
+  // Always include any file that lives under an api/ directory or is an
+  // explicit Next.js / Express / NestJS route/action handler.
+  if (lower.includes("/api/")) return true;
+  if (/\/pages\/api\//.test(lower)) return true;
+
+  // Common backend file name stems.
+  const backendKeywords = [
+    "controller",
+    "middleware",
+    "guard",
+    "auth",
+    "validator",
+    "schema",
+    "schemas",
+    "dto",
+    "router",
+    "server",
+    "service",
+    "services",
+    "repository",
+    "repositories",
+    "action", // Next.js server actions
+    "actions",
+    "handler",
+    "handlers",
+    "helper",
+    "helpers",
+    "hook", // SWR / React Query hooks that call APIs
+    "hooks",
+    "resolver", // GraphQL resolvers
+    "resolvers",
+    "mutation",
+    "mutations",
+    "query",
+    "queries",
+    "interceptor",
+    "interceptors",
+    "policy",
+    "policies",
+    "permission",
+    "permissions",
+    "event",
+    "events",
+    "gateway",
+    "gateways",
+    "provider",
+    "providers",
+    "config", // server config / env types
+    "utils", // utilities that may call external APIs
+    "util",
+    "lib", // general library code
+  ];
+
+  const basename = path.basename(lower, ext);
+  for (const kw of backendKeywords) {
+    if (
+      basename === kw ||
+      basename.endsWith(`-${kw}`) ||
+      basename.endsWith(`.${kw}`)
+    ) {
+      return true;
+    }
+    if (lower.includes(`/${kw}/`) || lower.includes(`/${kw}s/`)) return true;
+  }
+
+  // Top-level entry points
+  if (
     lower.endsWith("main.ts") ||
+    lower.endsWith("main.js") ||
     lower.endsWith("app.ts") ||
-    lower.endsWith("server.ts")
-  );
+    lower.endsWith("app.js") ||
+    lower.endsWith("server.ts") ||
+    lower.endsWith("server.js") ||
+    lower.endsWith("index.ts") ||
+    lower.endsWith("index.js")
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function isAuditTargetChunk(chunk: CodeChunkRow): boolean {
@@ -638,6 +708,9 @@ export async function indexRulesIfNeeded(): Promise<void> {
     embedding: number[];
   }> = [];
 
+  const embeddingModel =
+    process.env.AI_EMBEDDING_MODEL ?? "text-embedding-3-small";
+
   for (const rule of activeRules) {
     const chunkText = [
       `ID: ${rule.id}`,
@@ -649,7 +722,9 @@ export async function indexRulesIfNeeded(): Promise<void> {
       `Contents: ${JSON.stringify(rule.contents ?? {}, null, 2)}`,
     ].join("\n");
 
-    const ruleHash = sha256(chunkText);
+    // Include the model name in the hash so switching embedding models
+    // always triggers re-indexing even if rule text hasn't changed.
+    const ruleHash = sha256(`${chunkText}\n__model__:${embeddingModel}`);
     if (existingById.get(rule.id) === ruleHash) {
       continue;
     }
@@ -660,6 +735,7 @@ export async function indexRulesIfNeeded(): Promise<void> {
       chunk_text: chunkText,
       metadata: {
         rule_hash: ruleHash,
+        embedding_model: embeddingModel,
         category: rule.category,
         priority: rule.priority,
         title: rule.title,
@@ -729,12 +805,15 @@ export async function indexRepoCommit(args: {
   });
 
   const repoFull = `${parsed.owner}/${parsed.repo}`;
+  const embeddingModel =
+    process.env.AI_EMBEDDING_MODEL ?? "text-embedding-3-small";
 
-  const { count, error: countError } = await db
+  const { data: existingRows, error: countError } = await db
     .from("code_chunks")
-    .select("id", { count: "exact", head: true })
+    .select("metadata")
     .eq("repo", repoFull)
-    .eq("commit_sha", commitSha);
+    .eq("commit_sha", commitSha)
+    .limit(1);
 
   if (countError) {
     throw new Error(
@@ -742,12 +821,36 @@ export async function indexRepoCommit(args: {
     );
   }
 
+  const existingRow =
+    (
+      (existingRows ?? []) as Array<{ metadata?: Record<string, unknown> }>
+    )[0] ?? null;
+  const storedModel = existingRow?.metadata?.embedding_model;
+
+  // If chunks were indexed with a different model, clear them so they get
+  // re-embedded with the current model.
+  if (existingRow && storedModel !== embeddingModel) {
+    const { error: deleteError } = await db
+      .from("code_chunks")
+      .delete()
+      .eq("repo", repoFull)
+      .eq("commit_sha", commitSha);
+    if (deleteError) {
+      throw new Error(
+        `Failed to clear stale code chunks: ${deleteError.message}`,
+      );
+    }
+  }
+
+  const hasCurrentChunks =
+    existingRow !== null && storedModel === embeddingModel;
+
   const candidateFiles = tree
     .filter((entry) => entry.type === "blob" && isSourceCandidate(entry.path))
     .sort((a, b) => a.path.localeCompare(b.path))
     .slice(0, MAX_SOURCE_FILES);
 
-  if ((count ?? 0) === 0 && candidateFiles.length > 0) {
+  if (!hasCurrentChunks && candidateFiles.length > 0) {
     const blobContents = await mapWithConcurrency(
       candidateFiles,
       8,
@@ -792,6 +895,7 @@ export async function indexRepoCommit(args: {
           chunk_text: chunk.chunkText,
           metadata: {
             ref: selectedRef,
+            embedding_model: embeddingModel,
           },
           embedding,
         });
@@ -839,6 +943,7 @@ export async function indexRepoCommit(args: {
     endpointCount: routeData.routes.length,
     routes: routeData.routes,
     routeInsights: routeData.insights,
+    indexedFileCount: allPaths.length,
   };
 }
 
@@ -1227,10 +1332,11 @@ export async function auditRepoWithRag(
       counts: { p0: 0, p1: 0, p2: 0, total: 0 },
       metaJson: {
         status: "running",
-        scanner: "rag-minimax",
+        scanner: "rag-openai",
         repo: indexed.repoFull,
         commit_sha: indexed.commitSha,
         project_name: input.projectName ?? null,
+        indexed_files: indexed.indexedFileCount,
         processed_chunks: 0,
         total_chunks: targetChunks.length,
       },
@@ -1309,7 +1415,7 @@ export async function auditRepoWithRag(
             counts: toRunCounts(findings),
             metaJson: {
               status: "running",
-              scanner: "rag-minimax",
+              scanner: "rag-openai",
               repo: indexed.repoFull,
               commit_sha: indexed.commitSha,
               project_name: input.projectName ?? null,
@@ -1375,7 +1481,7 @@ export async function auditRepoWithRag(
           counts: toRunCounts(findings),
           metaJson: {
             status: "running",
-            scanner: "rag-minimax",
+            scanner: "rag-openai",
             repo: indexed.repoFull,
             commit_sha: indexed.commitSha,
             project_name: input.projectName ?? null,
@@ -1393,7 +1499,7 @@ export async function auditRepoWithRag(
           counts: toRunCounts(findings),
           metaJson: {
             status: "running",
-            scanner: "rag-minimax",
+            scanner: "rag-openai",
             repo: indexed.repoFull,
             commit_sha: indexed.commitSha,
             project_name: input.projectName ?? null,
@@ -1414,10 +1520,11 @@ export async function auditRepoWithRag(
       counts,
       metaJson: {
         status: "completed",
-        scanner: "rag-minimax",
+        scanner: "rag-openai",
         repo: indexed.repoFull,
         commit_sha: indexed.commitSha,
         project_name: input.projectName ?? null,
+        indexed_files: indexed.indexedFileCount,
         processed_chunks: targetChunks.length,
         total_chunks: targetChunks.length,
       },
@@ -1429,6 +1536,7 @@ export async function auditRepoWithRag(
     repoFull: indexed.repoFull,
     commitSha: indexed.commitSha,
     endpointCount: indexed.endpointCount,
+    indexedFileCount: indexed.indexedFileCount,
     routes: indexed.routes,
     routeInsights: indexed.routeInsights,
     cards: findings.map((finding) => ({

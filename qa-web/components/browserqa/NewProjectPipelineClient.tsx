@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Github, Link2 } from "lucide-react";
+import { Check, Github, Link2 } from "lucide-react";
 
 import type { GitHubRepoItem } from "@/app/api/github/repos/route";
 import { GitHubRepoPicker } from "@/components/browserqa/GitHubRepoPicker";
@@ -222,7 +222,84 @@ export function NewProjectPipelineClient() {
     }
   };
 
+  const CREATION_STEPS = [
+    { label: "Creating project" },
+    { label: "Analyzing repository" },
+    { label: "Finalizing" },
+  ];
+
+  const currentStep = busyMessage.toLowerCase().includes("analyz")
+    ? 1
+    : busyMessage.toLowerCase().includes("final")
+      ? 2
+      : 0;
+
   return (
+    <>
+      {busy && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-8 rounded-2xl border border-slate-700/60 bg-slate-900/95 px-12 py-10 shadow-2xl shadow-black/60">
+            {/* Animated rings */}
+            <div className="relative flex h-24 w-24 items-center justify-center">
+              <span className="absolute h-24 w-24 animate-spin rounded-full border-[3px] border-transparent border-t-emerald-400 border-r-emerald-400/40 spin-slow" />
+              <span className="absolute h-16 w-16 animate-spin rounded-full border-[3px] border-transparent border-b-blue-400 border-l-blue-400/40 spin-slower" />
+              <span className="absolute h-8 w-8 animate-spin rounded-full border-2 border-transparent border-t-violet-400 border-r-violet-400/50 spin-fast" />
+              <span className="h-3 w-3 animate-pulse rounded-full bg-emerald-400 shadow-[0_0_12px_3px_rgba(52,211,153,0.6)]" />
+            </div>
+
+            {/* Step tracker */}
+            <div className="flex flex-col gap-3 min-w-50">
+              {CREATION_STEPS.map((step, i) => {
+                const isDone = i < currentStep;
+                const isActive = i === currentStep;
+                return (
+                  <div key={step.label} className="flex items-center gap-3">
+                    <span
+                      className={[
+                        "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold transition-all duration-500",
+                        isDone
+                          ? "border-emerald-500 bg-emerald-500 text-slate-950"
+                          : isActive
+                            ? "border-emerald-400 bg-emerald-400/15 text-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.4)]"
+                            : "border-slate-600 bg-slate-800 text-slate-500",
+                      ].join(" ")}
+                    >
+                      {isDone ? (
+                        <Check className="h-3.5 w-3.5" strokeWidth={3} />
+                      ) : (
+                        <span
+                          className={isActive ? "animate-ping absolute inline-flex h-2 w-2 rounded-full bg-emerald-400 opacity-75" : ""}
+                        />
+                      )}
+                      {!isDone && <span className="relative">{i + 1}</span>}
+                    </span>
+                    <span
+                      className={[
+                        "text-sm font-medium transition-colors duration-300",
+                        isDone
+                          ? "text-emerald-400/70 line-through"
+                          : isActive
+                            ? "text-slate-100"
+                            : "text-slate-500",
+                      ].join(" ")}
+                    >
+                      {step.label}
+                      {isActive && (
+                        <span className="ml-1 inline-flex gap-0.75">
+                          <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-emerald-400 delay-0" />
+                          <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-emerald-400 delay-150" />
+                          <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-emerald-400 delay-300" />
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
     <div className="mx-auto flex w-full flex-col gap-6">
       <section>
         <h1 className="text-3xl font-bold text-slate-100">New Project</h1>
@@ -347,5 +424,6 @@ export function NewProjectPipelineClient() {
         </CardContent>
       </Card>
     </div>
+    </>
   );
 }

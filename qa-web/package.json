@@ -12,7 +12,10 @@
     "rules:extract": "tsx scripts/extract-security-rules.ts",
     "rules:upsert:api": "tsx scripts/upsert-api-audit-rules.ts",
     "rules:upsert:security": "tsx scripts/upsert-security-rules.ts",
-    "rules:upsert:all": "pnpm rules:upsert:api && pnpm rules:upsert:security"
+    "rules:upsert:all": "pnpm rules:upsert:api && pnpm rules:upsert:security",
+    "rules:index": "tsx scripts/index-rules.ts",
+    "rules:seed": "pnpm rules:upsert:all && pnpm rules:index",
+    "ai:test:key": "tsx scripts/test-openai-embed.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.53.0",

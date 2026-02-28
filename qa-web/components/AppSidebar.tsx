@@ -2,14 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  AlertCircle,
-  FolderKanban,
-  LayoutDashboard,
-  Play,
-  Plus,
-  Settings,
-} from "lucide-react";
+import { FileWarning, LogIn, PlusCircle, Settings, UserCircle } from "lucide-react";
 
 import {
   Sidebar,
@@ -23,13 +16,11 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar";
-import { Button } from "@/components/ui/button";
 
 const navItems = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/suites", label: "Suites", icon: FolderKanban },
-  { href: "/runs", label: "Runs", icon: Play },
-  { href: "/issues", label: "Issues", icon: AlertCircle },
+  { href: "/projects/new", label: "New Project", icon: PlusCircle },
+  { href: "/issues", label: "Issues", icon: FileWarning },
+  { href: "/profile", label: "Profile", icon: UserCircle },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -42,25 +33,18 @@ export function AppSidebar() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
-              <Link href="/">
+              <Link href="/projects/new">
                 <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-blue-500 text-slate-950">
                   <span className="text-sm font-bold">QA</span>
                 </div>
                 <div className="flex flex-col gap-0.5 leading-none">
-                  <span className="font-semibold text-slate-100">BrowserQA</span>
-                  <span className="text-xs text-slate-400">Studio</span>
+                  <span className="font-semibold text-slate-100">BrowserQA Pipeline</span>
+                  <span className="text-xs text-slate-400">v2</span>
                 </div>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-
-        <Button asChild size="sm" className="bg-blue-500 text-slate-950 hover:bg-blue-400">
-          <Link href="/suites/new">
-            <Plus className="mr-1 h-4 w-4" />
-            New Suite
-          </Link>
-        </Button>
       </SidebarHeader>
 
       <SidebarContent>
@@ -68,11 +52,7 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {navItems.map(({ href, label, icon: Icon }) => {
-                const active =
-                  href === "/"
-                    ? pathname === "/" || pathname === "/dashboard"
-                    : pathname === href || pathname.startsWith(`${href}/`);
-
+                const active = pathname === href || pathname.startsWith(`${href}/`);
                 return (
                   <SidebarMenuItem key={href}>
                     <SidebarMenuButton asChild isActive={active} tooltip={label}>
@@ -90,7 +70,16 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter>
-        <p className="px-2 py-1 text-xs text-slate-500">BrowserQA Studio v1.0</p>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild tooltip="Log In">
+              <Link href="/login">
+                <LogIn className="h-4 w-4" />
+                <span>Log In</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarFooter>
 
       <SidebarRail />

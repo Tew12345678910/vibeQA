@@ -1,256 +1,148 @@
-# QA Web Project Configuration, API Connection, and Features
+# BrowserQA Unified Pipeline — Project Configuration, API, and Features
 
-## 1. Project Overview
+Last verified against codebase: 2026-02-28.
 
-`qa-web` is a Next.js (App Router) application for running hosted website QA audits through a cloud browser provider.
+## 1. Product Scope
+This project now runs a single pipeline only:
 
-Main capabilities:
-- Start an audit for a hosted HTTPS site.
-- Persist run state/results in Postgres.
-- Poll cloud status and sync results.
-- View audit history and audit details.
-- Cancel active audits.
-- Export report as JSON or Markdown.
+1. Source scan (`ZIP` or public GitHub URL)
+2. Show scan result to user
+3. User confirms project by entering a public HTTPS URL
+4. Redirect immediately to Issues result page
+5. Show findings one-by-one with ordering:
+   - local static scan findings first
+   - nextjs-api/browser review findings second
 
-## 2. Tech Stack and Core Dependencies
+No legacy Project Auditor compatibility routes are part of this pipeline.
 
-From `package.json`:
-- Framework: Next.js `16.1.6`
-- Runtime: React `19.2.3`
-- Language: TypeScript (strict mode)
-- Validation: `zod`
-- Database client: `postgres` (Neon/Postgres compatible)
-- UI: shadcn-style components + Radix primitives + Tailwind CSS
-
-Important scripts:
-- `npm run dev` - start local dev server
-- `npm run build` - production build
-- `npm run start` - run production server
-- `npm run lint` - lint project
-- `npm run db:setup` - create DB schema (`tsx scripts/setup-db.ts`)
+## 2. Main User Routes
+- `/projects/new` — unified source scan + confirm flow
+- `/issues?runId=<RUN-ID>` — issue result page for a run
+- `/` and `/dashboard` redirect to `/projects/new`
 
 ## 3. Required Environment Variables
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `SUPABASE_SECRET_KEY` or `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_STORAGE_BUCKET` (optional, default: `qa-project-artifacts`)
+- `OPENAI_API_KEY` (optional fallback supported)
+- `OPENAI_MODEL` (optional)
+- `BROWSER_USE_SERVER_BASE_URL` (optional; if missing, remote review is marked disabled)
+- `BROWSER_USE_SERVER_API_KEY` (optional)
 
-Used directly in source code:
+## 4. Storage (Supabase)
+All pipeline artifacts are stored in Supabase Storage bucket `qa-project-artifacts` (or `SUPABASE_STORAGE_BUCKET`).
 
-- `DATABASE_URL`
-  - Required by `lib/db/client.ts`
-  - Postgres connection string
+### Scan paths
+- `pipeline/scans/<scanId>/source.zip`
+- `pipeline/scans/<scanId>/standards_scorecard.json`
+- `pipeline/scans/<scanId>/browser_use_test_plan.json`
+- `pipeline/scans/<scanId>/ai_report.md`
+- `pipeline/scans/<scanId>/scan_state.json`
 
-- `CLOUD_BROWSER_API_BASE_URL`
-  - Required by `lib/cloud/client.ts`
-  - Base URL for cloud browser provider API
-  - Example: `https://your-cloud-browser-api.example.com`
+### Run paths
+- `pipeline/runs/<runId>/run_state.json`
+- `pipeline/runs/<runId>/browser_use_request.json`
+- `pipeline/runs/<runId>/browser_use_findings.json` (when remote review completes)
 
-- `CLOUD_BROWSER_API_KEY`
-  - Required by `lib/cloud/client.ts`
-  - Sent as Bearer token in `Authorization` header
+## 5. Scanner Engine (Static + Safe)
+Scanner is static-only and does not execute user code.
 
-If missing, server throws explicit runtime errors:
-- `DATABASE_URL is required`
-- `CLOUD_BROWSER_API_BASE_URL is required`
-- `CLOUD_BROWSER_API_KEY is required`
+Implemented checks include:
+- Detect Next.js App Router vs Pages Router
+- Enumerate endpoints from:
+  - `app/api/**/route.ts|js`
+  - `pages/api/**.ts|js`
+- Dependency inspection from `package.json`
+- Pattern scan (regex fallback) for:
+  - response contract/status usage
+  - validation usage (`zod`, `joi`, etc.)
+  - auth guards and ownership checks
+  - rate limit existence + route application
+  - idempotency key + storage signal
+  - timeouts/retries wrappers
+  - requestId logging
+  - pagination params + max-limit signals
 
-## 4. Project Structure (High-Level)
+## 6. Browser Use Requirement Payload
+`browser_use_test_plan.json` is generated from scan output and sent to Browser Use server when the project is confirmed.
 
-- `app/`
-  - UI routes and API routes (`app/api/...`)
-- `components/`
-  - UI and feature components (`AuditForm`, `AuditDetailClient`, etc.)
-- `lib/contracts.ts`
-  - Zod schemas and domain types
-- `lib/audits/service.ts`
-  - Orchestration layer (validate, start, sync, list, cancel)
-- `lib/cloud/`
-  - Cloud API client and payload mapper
-- `lib/db/`
-  - DB connection and repository methods
-- `lib/reporting/markdown.ts`
-  - Markdown export builder
-- `scripts/setup-db.ts`
-  - DB schema setup entrypoint
+Shape:
+```json
+{
+  "project": { "name": "", "framework": "nextjs", "baseUrl": "", "notes": "" },
+  "standards": ["Contract", "Validation", "Auth", "RateLimit", "Idempotency", "Pagination", "UX"],
+  "routes": [
+    {
+      "path": "/",
+      "purpose": "",
+      "criticality": "high|medium|low",
+      "tests": [
+        { "id": "", "category": "", "goal": "", "steps": ["..."], "expected": "", "severity_if_fail": "P0|P1|P2" }
+      ]
+    }
+  ]
+}
+```
 
-## 5. Data and Execution Flow
+## 7. Browser Use Findings Contract
+Remote findings use this schema:
 
-### Start Audit
-1. Client submits form to `POST /api/audits`.
-2. Request is parsed/validated with Zod (`auditRequestSchema`).
-3. URL safety checks enforce hosted HTTPS (no localhost/private IP).
-4. DB row is created in `audit_runs` with status `queued`.
-5. App calls external cloud API `POST /audits`.
-6. Returned external run id is stored; run status updated.
+```json
+{
+  "run": { "baseUrl": "", "timestamp": "", "deviceProfiles": ["desktop", "mobile"] },
+  "findings": [
+    {
+      "testId": "",
+      "path": "",
+      "result": "pass|fail|blocked",
+      "severity": "P0|P1|P2",
+      "observed": "",
+      "expected": "",
+      "reproSteps": ["..."],
+      "evidence": { "url": "", "notes": "", "screenshot": "optional-id" }
+    }
+  ],
+  "summary": { "pass": 0, "fail": 0, "blocked": 0 }
+}
+```
 
-### Get Audit
-1. Client (detail page) requests `GET /api/audits/:auditId`.
-2. Service checks if run should sync (`THROTTLE_MS = 2000`).
-3. If sync is needed, app calls cloud `GET /audits/:externalRunId`.
-4. Cloud payload is mapped to internal schema (`pageResults`, `issues`, `artifacts`, `summary`, `progress`).
-5. DB snapshot is updated and returned.
+## 8. Unified Issues API Response
+Fetch-all-issues response format:
 
-### Cancel Audit
-1. Client calls `POST /api/audits/:auditId/cancel`.
-2. Service attempts best-effort cloud cancel.
-3. Internal DB status is set to `canceled`.
+```json
+{
+  "report": {
+    "id": "RUN-20260228-001",
+    "project": { "name": "my-app", "framework": "nextjs" },
+    "generated_at": "2026-02-28T00:00:00Z",
+    "summary": {
+      "score": 72,
+      "p0": 2,
+      "p1": 5,
+      "p2": 7
+    }
+  },
+  "cards": [
+    { "...ImproveCard": "..." }
+  ]
+}
+```
 
-## 6. Internal API Endpoints
+Cards are always sorted as:
+1. `source: "local"`
+2. `source: "nextjs-api"`
 
-Base path: `/api/audits`
+## 9. Active API Endpoints (Pipeline)
+- `POST /api/pipeline/scans/zip`
+- `POST /api/pipeline/scans/github`
+- `GET /api/pipeline/scans/:scanId`
+- `POST /api/pipeline/reviews`
+- `GET /api/pipeline/issues/:runId`
+- `GET /api/issues?runId=<RUN-ID>` (fetch-all-issues contract)
 
-### `POST /api/audits`
-Start a new audit.
-
-Request body (validated by `auditRequestSchema`):
-- `baseUrl: string (url)`
-- `routes: string[]` (default `[]`)
-- `viewports: [desktop, mobile]` (forced to default viewports in service)
-- `maxPages: 1..10` (default `6`)
-- `maxClicksPerPage: 1..10` (default `6`)
-- `focus: usability | accessibility | security | content | functional` (at least one)
-
-Responses:
-- `202`: `{ auditId, status }`
-- `400`: `{ error }`
-
-### `GET /api/audits`
-List audits with filters/pagination.
-
-Query params:
-- `status` (optional)
-- `cursor` (optional positive int)
-- `limit` (optional 1..50)
-- `baseUrl` (optional string match)
-- `dateFrom` (optional `YYYY-MM-DD`)
-- `dateTo` (optional `YYYY-MM-DD`)
-
-Response:
-- `200`: `{ items: AuditListItem[], nextCursor: number | null }`
-- `400`: `{ error }`
-
-### `GET /api/audits/:auditId`
-Get one audit status snapshot (includes cloud sync when eligible).
-
-Responses:
-- `200`: `AuditStatusResponse`
-- `404`: `{ error: "Audit not found" }`
-- `400`: `{ error }`
-
-### `POST /api/audits/:auditId/cancel`
-Cancel a run.
-
-Responses:
-- `200`: `{ ok: true, status: "canceled" }`
-- `404`: `{ error: "Run not found" }`
-- `400`: `{ error }`
-
-### `GET /api/audits/:auditId/export?format=json|md`
-Export report.
-
-Behavior:
-- `format=md`: markdown content with download filename `audit-<id>.md`
-- `format=json` (default): JSON payload with filename `audit-<id>.json`
-
-Responses:
-- `200` export content
-- `404`: `{ error: "Audit not found" }`
-- `400`: `{ error }`
-
-## 7. External Cloud API Connection
-
-Configured in `lib/cloud/client.ts`.
-
-Authentication:
-- `Authorization: Bearer <CLOUD_BROWSER_API_KEY>`
-- `content-type: application/json`
-
-Cloud endpoints called:
-- `POST {CLOUD_BROWSER_API_BASE_URL}/audits` - start run
-- `GET {CLOUD_BROWSER_API_BASE_URL}/audits/:externalRunId` - fetch run snapshot
-- `POST {CLOUD_BROWSER_API_BASE_URL}/audits/:externalRunId/cancel` - cancel run
-
-Cloud start response parsing:
-- Run id accepted from any of: `externalRunId`, `id`, `runId`, `auditId`
-- Status accepted from `status` or `state` (defaults to `queued`)
-
-Cloud snapshot mapping (`lib/cloud/mapper.ts`):
-- Run status aliases are normalized to:
-  - `queued | running | completed | failed | canceled`
-- Page result aliases are normalized to:
-  - `pending | running | ok | warning | error`
-- Supports multiple source field names:
-  - pages: `pageResults | results | pages`
-  - issues: `issues | findings`
-  - artifacts: `artifacts | evidenceLinks`
-
-## 8. Database Configuration and Schema
-
-Connection (`lib/db/client.ts`):
-- Uses `postgres` client with:
-  - `ssl: "require"`
-  - `max: 1`
-  - `prepare: false`
-  - `idle_timeout: 20`
-  - `connect_timeout: 15`
-
-Schema creation (`ensureSchema`, executed by runtime + `npm run db:setup`):
-- `audit_runs`
-- `audit_page_results`
-- `audit_issues`
-- `audit_artifacts`
-
-Indexes:
-- `audit_runs(status, created_at DESC)`
-- `audit_runs(base_url)`
-- per-table `audit_id` indexes for detail tables
-
-## 9. Validation and Safety Rules
-
-From `lib/contracts.ts` and `lib/utils/urlSafety.ts`:
-- Only `https://` base URLs are accepted.
-- Local/private targets are rejected (`localhost`, `127.0.0.1`, `10.x.x.x`, `192.168.x.x`, `172.16-31.x.x`, `::1`).
-- Routes are normalized and deduplicated.
-- Max 20 normalized routes are kept.
-- `maxPages` and `maxClicksPerPage` limited to `1..10`.
-
-## 10. User-Facing Features
-
-### Home (`/`)
-- New audit form with:
-  - base URL
-  - optional routes
-  - max pages
-  - max clicks per page
-  - focus areas
-
-### Audit History (`/audits`)
-- Filters by status, base URL, date range
-- Paginated results (cursor-based)
-- Per-run actions: `Open`, `Retry`
-
-### Audit Detail (`/audits/:auditId`)
-- Live polling for queued/running runs
-- Refresh and Cancel actions
-- Metrics summary (status, pages, pass/fail, high-risk)
-- Progress section
-- Route x viewport matrix
-- Issue cards with evidence links
-- Evidence gallery (screenshots)
-- Export JSON/Markdown
-
-## 11. Local Setup Checklist
-
-1. Install deps:
-   - `npm install`
-2. Configure env vars:
-   - `DATABASE_URL`
-   - `CLOUD_BROWSER_API_BASE_URL`
-   - `CLOUD_BROWSER_API_KEY`
-3. Initialize DB schema:
-   - `npm run db:setup`
-4. Start app:
-   - `npm run dev`
-
-## 12. Notes for Integrators
-
-- Internal API is strict-Zod validated; malformed payloads return `400`.
-- Cloud provider payload shape is flexible due to mapper aliases.
-- App stores raw inputs plus normalized snapshots, so exports are stable even if provider payload shape changes.
+## 10. Local Run Checklist
+1. `pnpm install`
+2. Set required env vars in `.env.local`
+3. `pnpm dev`
+4. Open `http://localhost:3000/projects/new`
+5. Scan source, confirm URL, verify redirect to `/issues?runId=...`

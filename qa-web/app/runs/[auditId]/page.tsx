@@ -1,4 +1,4 @@
-import { RunDetailClient } from "@/components/browserqa/RunDetailClient";
+import { redirect } from "next/navigation";
 
 type Props = {
   params: Promise<{ auditId: string }>;
@@ -6,5 +6,5 @@ type Props = {
 
 export default async function RunDetailPage({ params }: Props) {
   const { auditId } = await params;
-  return <RunDetailClient auditId={auditId} />;
+  redirect(`/issues?runId=${encodeURIComponent(auditId)}`);
 }

@@ -14,10 +14,11 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { fetchAudits } from "@/lib/browserqa/api";
 import { formatRelative, toPassRate } from "@/lib/browserqa/format";
-import { buildSuitesFromAudits } from "@/lib/browserqa/suite-utils";
+import { buildProjectsFromAudits } from "@/lib/browserqa/project-utils";
 import { listItemDisplayStatus } from "@/lib/browserqa/status";
 import { StatusBadge } from "@/components/browserqa/StatusBadge";
 import { StatsCard } from "@/components/browserqa/StatsCard";
+import { DashboardLoadingState } from "@/components/browserqa/LoadingStates";
 import type { AuditListItem } from "@/lib/contracts";
 
 export function DashboardClient() {
@@ -35,7 +36,9 @@ export function DashboardClient() {
         setAudits(response.items);
       } catch (err) {
         if (!active) return;
-        setError(err instanceof Error ? err.message : "Failed to load dashboard");
+        setError(
+          err instanceof Error ? err.message : "Failed to load dashboard",
+        );
       } finally {
         if (!active) return;
         setLoading(false);
@@ -48,7 +51,7 @@ export function DashboardClient() {
     };
   }, []);
 
-  const suites = useMemo(() => buildSuitesFromAudits(audits), [audits]);
+  const projects = useMemo(() => buildProjectsFromAudits(audits), [audits]);
 
   const stats = useMemo(() => {
     const passed = audits.filter(
@@ -63,17 +66,17 @@ export function DashboardClient() {
     );
 
     return {
-      totalSuites: suites.length,
+      totalSuites: projects.length,
       totalRuns: audits.length,
       totalTestCases,
       passRate: toPassRate(passed, failed),
       recentRuns: audits.slice(0, 5),
-      recentSuites: suites.slice(0, 5),
+      recentSuites: projects.slice(0, 5),
     };
-  }, [audits, suites]);
+  }, [audits, projects]);
 
   if (loading) {
-    return <p className="text-sm text-slate-400">Loading dashboard...</p>;
+    return <DashboardLoadingState />;
   }
 
   if (error) {
@@ -90,26 +93,51 @@ export function DashboardClient() {
       </section>
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatsCard title="Total Suites" value={stats.totalSuites} icon={FolderKanban} tone="blue" />
-        <StatsCard title="Total Runs" value={stats.totalRuns} icon={Play} tone="slate" />
-        <StatsCard title="Test Cases" value={stats.totalTestCases} icon={CheckCircle2} tone="green" />
+        <StatsCard
+          title="Total Projects"
+          value={stats.totalSuites}
+          icon={FolderKanban}
+          tone="blue"
+        />
+        <StatsCard
+          title="Total Runs"
+          value={stats.totalRuns}
+          icon={Play}
+          tone="slate"
+        />
+        <StatsCard
+          title="Test Cases"
+          value={stats.totalTestCases}
+          icon={CheckCircle2}
+          tone="green"
+        />
         <StatsCard
           title="Pass Rate"
           value={`${stats.passRate}%`}
           icon={XCircle}
-          tone={stats.passRate >= 80 ? "green" : stats.passRate >= 50 ? "yellow" : "red"}
+          tone={
+            stats.passRate >= 80
+              ? "green"
+              : stats.passRate >= 50
+                ? "yellow"
+                : "red"
+          }
         />
       </section>
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Link
-          href="/suites/new"
+          href="/projects/new"
           className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 transition-colors hover:border-blue-500/50"
         >
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-lg font-semibold text-slate-100">Create New Suite</h3>
-              <p className="mt-1 text-sm text-slate-400">Set up a new test suite for your project</p>
+              <h3 className="text-lg font-semibold text-slate-100">
+                Create New Project
+              </h3>
+              <p className="mt-1 text-sm text-slate-400">
+                Set up a new QA project for your website
+              </p>
             </div>
             <div className="rounded-xl border border-blue-500/30 bg-blue-500/15 p-3 text-blue-300">
               <Plus className="h-5 w-5" />
@@ -118,13 +146,17 @@ export function DashboardClient() {
         </Link>
 
         <Link
-          href="/suites"
+          href="/projects"
           className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 transition-colors hover:border-emerald-500/50"
         >
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-lg font-semibold text-slate-100">Run All Suites</h3>
-              <p className="mt-1 text-sm text-slate-400">Review suites and trigger new audit runs</p>
+              <h3 className="text-lg font-semibold text-slate-100">
+                View All Projects
+              </h3>
+              <p className="mt-1 text-sm text-slate-400">
+                Review projects and trigger new audit runs
+              </p>
             </div>
             <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/15 p-3 text-emerald-300">
               <Play className="h-5 w-5" />
@@ -136,18 +168,27 @@ export function DashboardClient() {
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card className="border-slate-800 bg-slate-900/70">
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-lg text-slate-100">Recent Runs</CardTitle>
-            <Link href="/runs" className="inline-flex items-center gap-1 text-sm text-blue-300 hover:text-blue-200">
+            <CardTitle className="text-lg text-slate-100">
+              Recent Runs
+            </CardTitle>
+            <Link
+              href="/runs"
+              className="inline-flex items-center gap-1 text-sm text-blue-300 hover:text-blue-200"
+            >
               View all <ArrowRight className="h-4 w-4" />
             </Link>
           </CardHeader>
           <CardContent>
             {stats.recentRuns.length === 0 ? (
-              <p className="py-8 text-center text-sm text-slate-500">No runs yet</p>
+              <p className="py-8 text-center text-sm text-slate-500">
+                No runs yet
+              </p>
             ) : (
               <div className="space-y-2">
                 {stats.recentRuns.map((run) => {
-                  const suite = suites.find((entry) => entry.baseUrl === run.baseUrl);
+                  const project = projects.find(
+                    (entry) => entry.baseUrl === run.baseUrl,
+                  );
                   return (
                     <Link
                       key={run.auditId}
@@ -155,10 +196,17 @@ export function DashboardClient() {
                       className="flex items-center justify-between rounded-lg border border-slate-800/70 px-3 py-2.5 hover:border-slate-700 hover:bg-slate-800/30"
                     >
                       <div>
-                        <p className="font-medium text-slate-100">{suite?.name ?? run.baseUrl}</p>
-                        <p className="text-xs text-slate-500">{formatRelative(run.createdAt)}</p>
+                        <p className="font-medium text-slate-100">
+                          {project?.name ?? run.baseUrl}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {formatRelative(run.createdAt)}
+                        </p>
                       </div>
-                      <StatusBadge status={listItemDisplayStatus(run)} size="sm" />
+                      <StatusBadge
+                        status={listItemDisplayStatus(run)}
+                        size="sm"
+                      />
                     </Link>
                   );
                 })}
@@ -169,25 +217,34 @@ export function DashboardClient() {
 
         <Card className="border-slate-800 bg-slate-900/70">
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-lg text-slate-100">Suites</CardTitle>
-            <Link href="/suites" className="inline-flex items-center gap-1 text-sm text-blue-300 hover:text-blue-200">
+            <CardTitle className="text-lg text-slate-100">Projects</CardTitle>
+            <Link
+              href="/projects"
+              className="inline-flex items-center gap-1 text-sm text-blue-300 hover:text-blue-200"
+            >
               View all <ArrowRight className="h-4 w-4" />
             </Link>
           </CardHeader>
           <CardContent>
             {stats.recentSuites.length === 0 ? (
-              <p className="py-8 text-center text-sm text-slate-500">No suites yet. Create your first suite.</p>
+              <p className="py-8 text-center text-sm text-slate-500">
+                No projects yet. Create your first project.
+              </p>
             ) : (
               <div className="space-y-2">
-                {stats.recentSuites.map((suite) => (
+                {stats.recentSuites.map((project) => (
                   <Link
-                    key={suite.id}
-                    href={`/suites/${suite.id}`}
+                    key={project.id}
+                    href={`/projects/${project.id}`}
                     className="flex items-center justify-between rounded-lg border border-slate-800/70 px-3 py-2.5 hover:border-slate-700 hover:bg-slate-800/30"
                   >
                     <div>
-                      <p className="font-medium text-slate-100">{suite.name}</p>
-                      <p className="text-xs text-slate-500">{suite.baseUrl}</p>
+                      <p className="font-medium text-slate-100">
+                        {project.name}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {project.baseUrl}
+                      </p>
                     </div>
                     <ArrowRight className="h-4 w-4 text-slate-500" />
                   </Link>

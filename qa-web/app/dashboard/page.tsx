@@ -1,5 +1,5 @@
-import { DashboardClient } from "@/components/browserqa/DashboardClient";
+import { redirect } from "next/navigation";
 
 export default function DashboardPage() {
-  return <DashboardClient />;
+  redirect("/projects/new");
 }

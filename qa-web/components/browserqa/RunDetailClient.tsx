@@ -25,6 +25,7 @@ import { cancelAudit, fetchAudit } from "@/lib/browserqa/api";
 import { detailDisplayStatus } from "@/lib/browserqa/status";
 import { formatDateTime, toPassRate } from "@/lib/browserqa/format";
 import { StatusBadge } from "@/components/browserqa/StatusBadge";
+import { DetailLoadingState } from "@/components/browserqa/LoadingStates";
 import type { AuditStatusResponse, PageResult } from "@/lib/contracts";
 
 type Props = {
@@ -126,7 +127,7 @@ export function RunDetailClient({ auditId }: Props) {
   };
 
   if (loading) {
-    return <p className="text-sm text-slate-400">Loading run...</p>;
+    return <DetailLoadingState label="Loading run..." />;
   }
 
   if (!audit) {

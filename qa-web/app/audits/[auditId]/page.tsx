@@ -6,5 +6,5 @@ type Props = {
 
 export default async function AuditAliasPage({ params }: Props) {
   const { auditId } = await params;
-  redirect(`/runs/${auditId}`);
+  redirect(`/issues?runId=${encodeURIComponent(auditId)}`);
 }

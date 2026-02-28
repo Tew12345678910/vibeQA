@@ -1,23 +1,40 @@
-import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-// Using the Neon HTTP serverless driver to avoid TCP CONNECT_TIMEOUT errors
-// in serverless/edge environments. Each tagged-template call is an HTTP fetch.
 declare global {
-  // eslint-disable-next-line no-var
-  var __qaSql: NeonQueryFunction<false, false> | undefined;
+  var __qaSupabaseAdmin: SupabaseClient | undefined;
 }
 
-export function getSql(): NeonQueryFunction<false, false> {
-  if (globalThis.__qaSql) {
-    return globalThis.__qaSql;
+function requireSupabaseEnv(): { url: string; serviceRoleKey: string } {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey =
+    process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_URL is required");
   }
 
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    throw new Error("DATABASE_URL is required");
+  if (!serviceRoleKey) {
+    throw new Error(
+      "SUPABASE_SECRET_KEY (or SUPABASE_SERVICE_ROLE_KEY) is required for server DB access",
+    );
   }
 
-  globalThis.__qaSql = neon(databaseUrl);
+  return { url, serviceRoleKey };
+}
 
-  return globalThis.__qaSql;
+export function getDbClient(): SupabaseClient {
+  if (globalThis.__qaSupabaseAdmin) {
+    return globalThis.__qaSupabaseAdmin;
+  }
+
+  const { url, serviceRoleKey } = requireSupabaseEnv();
+
+  globalThis.__qaSupabaseAdmin = createClient(url, serviceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+
+  return globalThis.__qaSupabaseAdmin;
 }

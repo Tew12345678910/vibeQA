@@ -1,230 +1,236 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, Clock, Filter, Search } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { fetchAudit, fetchAudits } from "@/lib/browserqa/api";
-import { formatDate } from "@/lib/browserqa/format";
-import { buildSuitesFromAudits } from "@/lib/browserqa/suite-utils";
-import type { Issue } from "@/lib/contracts";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
-type IssueRow = {
+type ImproveCard = {
   id: string;
-  auditId: string;
-  issue: Issue;
-  baseUrl: string;
-  suiteName: string;
-  runDate: string;
+  source: "local" | "nextjs-api";
+  title: string;
+  priority: "P0" | "P1" | "P2";
+  category: string;
+  impact: {
+    user: string;
+    business: string;
+    risk: string;
+  };
+  problem: {
+    summary: string;
+    evidence: Array<{
+      type: "code" | "browser";
+      path: string;
+      line_start: number;
+      line_end: number;
+      snippet: string;
+    }>;
+  };
+  recommendation: {
+    summary: string;
+    implementation_steps: string[];
+    acceptance_criteria: string[];
+    estimated_effort: "S" | "M" | "L";
+    confidence: "high" | "medium" | "low";
+  };
 };
 
-const severityFilters = ["all", "high", "medium", "low"] as const;
+type IssuesResponse = {
+  report: {
+    id: string;
+    project: {
+      name: string;
+      framework: "nextjs";
+    };
+    generated_at: string;
+    summary: {
+      score: number;
+      p0: number;
+      p1: number;
+      p2: number;
+    };
+  };
+  cards: ImproveCard[];
+  remote: {
+    status: "queued" | "running" | "completed" | "failed" | "disabled";
+    error: string | null;
+  };
+};
 
 export function IssuesPageClient() {
-  const [issues, setIssues] = useState<IssueRow[]>([]);
-  const [search, setSearch] = useState("");
-  const [severityFilter, setSeverityFilter] = useState<(typeof severityFilters)[number]>("all");
+  const searchParams = useSearchParams();
+  const runId = searchParams.get("runId")?.trim() ?? "";
+
+  const [data, setData] = useState<IssuesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
+    if (!runId) {
+      setLoading(false);
+      return;
+    }
+
     let active = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
-    const load = async () => {
+    const tick = async () => {
       try {
-        const list = await fetchAudits({ limit: 30 });
-        if (!active) return;
-
-        const details = await Promise.all(
-          list.items.map(async (item) => {
-            try {
-              const detail = await fetchAudit(item.auditId);
-              return { item, issues: detail.issues };
-            } catch {
-              return { item, issues: [] as Issue[] };
-            }
-          }),
-        );
-
-        if (!active) return;
-
-        const suites = buildSuitesFromAudits(list.items);
-        const flattened: IssueRow[] = [];
-
-        details.forEach(({ item, issues: auditIssues }) => {
-          const suite = suites.find((entry) => entry.baseUrl === item.baseUrl);
-
-          auditIssues.forEach((issue, index) => {
-            flattened.push({
-              id: `${item.auditId}-${index}`,
-              auditId: item.auditId,
-              issue,
-              baseUrl: item.baseUrl,
-              suiteName: suite?.name ?? item.baseUrl,
-              runDate: item.createdAt,
-            });
-          });
+        const response = await fetch(`/api/issues?runId=${encodeURIComponent(runId)}`, {
+          cache: "no-store",
         });
 
-        setIssues(flattened);
+        const payload = (await response.json()) as IssuesResponse | { error?: string };
+        if (!response.ok || !("report" in payload)) {
+          throw new Error((payload as { error?: string }).error ?? "Failed to load issues");
+        }
+
+        if (!active) return;
+        setData(payload);
+        setError("");
+        setLoading(false);
+
+        if (["queued", "running"].includes(payload.remote.status)) {
+          timer = setTimeout(() => {
+            void tick();
+          }, 4000);
+        }
       } catch (err) {
         if (!active) return;
         setError(err instanceof Error ? err.message : "Failed to load issues");
-      } finally {
-        if (!active) return;
         setLoading(false);
       }
     };
 
-    void load();
+    void tick();
 
     return () => {
       active = false;
+      if (timer) clearTimeout(timer);
     };
-  }, []);
+  }, [runId]);
 
-  const filtered = useMemo(() => {
-    const keyword = search.trim().toLowerCase();
+  const cards = useMemo(() => data?.cards ?? [], [data]);
 
-    return issues.filter((entry) => {
-      const severityMatch =
-        severityFilter === "all" || entry.issue.severity === severityFilter;
-      const searchMatch =
-        !keyword ||
-        entry.issue.title.toLowerCase().includes(keyword) ||
-        entry.issue.symptom.toLowerCase().includes(keyword) ||
-        entry.suiteName.toLowerCase().includes(keyword);
-
-      return severityMatch && searchMatch;
-    });
-  }, [issues, search, severityFilter]);
-
-  const counts = useMemo(() => {
-    return {
-      all: issues.length,
-      high: issues.filter((entry) => entry.issue.severity === "high").length,
-      medium: issues.filter((entry) => entry.issue.severity === "medium").length,
-      low: issues.filter((entry) => entry.issue.severity === "low").length,
-    };
-  }, [issues]);
+  if (!runId) {
+    return (
+      <Card className="border-slate-800 bg-slate-900/70">
+        <CardHeader>
+          <CardTitle className="text-slate-100">Issues</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-slate-300">
+            Start from <span className="font-medium">/projects/new</span>, then confirm the project to open this issue result page.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (loading) {
-    return <p className="text-sm text-slate-400">Loading issues...</p>;
+    return <p className="text-sm text-slate-300">Loading issues...</p>;
+  }
+
+  if (error) {
+    return <p className="text-sm text-red-300">{error}</p>;
+  }
+
+  if (!data) {
+    return <p className="text-sm text-red-300">Issue report not found.</p>;
   }
 
   return (
     <div className="space-y-6">
-      <section>
-        <h1 className="text-3xl font-bold text-slate-100">Issues</h1>
-        <p className="mt-2 text-slate-400">View and track all detected issues across your test runs</p>
+      <section className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-100">Issue Result</h1>
+          <p className="mt-1 text-sm text-slate-400">
+            {data.report.id} • {data.report.project.name} ({data.report.project.framework})
+          </p>
+          <p className="text-xs text-slate-500">Generated: {new Date(data.report.generated_at).toLocaleString()}</p>
+        </div>
+        <Button
+          type="button"
+          variant="secondary"
+          className="bg-slate-800 text-slate-100 hover:bg-slate-700"
+          onClick={() => window.location.reload()}
+        >
+          Refresh
+        </Button>
       </section>
 
-      <section className="flex flex-col gap-3 md:flex-row">
-        <div className="relative flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search issues..."
-            className="border-slate-700 bg-slate-900/70 pl-10 text-slate-100"
-          />
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Filter className="h-4 w-4 text-slate-400" />
-          <select
-            value={severityFilter}
-            onChange={(event) =>
-              setSeverityFilter(event.target.value as (typeof severityFilters)[number])
-            }
-            className="h-10 rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-slate-100 outline-none"
-          >
-            {severityFilters.map((severity) => (
-              <option key={severity} value={severity}>
-                {severity[0].toUpperCase() + severity.slice(1)} ({counts[severity]})
-              </option>
-            ))}
-          </select>
-        </div>
+      <section className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <Card className="border-slate-800 bg-slate-900/70"><CardContent className="p-4"><p className="text-xs text-slate-400">Score</p><p className="text-xl font-semibold text-slate-100">{data.report.summary.score}</p></CardContent></Card>
+        <Card className="border-slate-800 bg-slate-900/70"><CardContent className="p-4"><p className="text-xs text-slate-400">P0</p><p className="text-xl font-semibold text-red-300">{data.report.summary.p0}</p></CardContent></Card>
+        <Card className="border-slate-800 bg-slate-900/70"><CardContent className="p-4"><p className="text-xs text-slate-400">P1</p><p className="text-xl font-semibold text-amber-300">{data.report.summary.p1}</p></CardContent></Card>
+        <Card className="border-slate-800 bg-slate-900/70"><CardContent className="p-4"><p className="text-xs text-slate-400">P2</p><p className="text-xl font-semibold text-sky-300">{data.report.summary.p2}</p></CardContent></Card>
       </section>
 
-      {error ? <p className="text-sm text-red-300">{error}</p> : null}
+      <Card className="border-slate-800 bg-slate-900/70">
+        <CardHeader>
+          <CardTitle className="text-slate-100">Pipeline Status</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-slate-300">
+            Local findings are shown first. Next.js API/browser review findings are appended after local findings.
+          </p>
+          <p className="mt-1 text-xs text-slate-500">Remote status: {data.remote.status}{data.remote.error ? ` • ${data.remote.error}` : ""}</p>
+        </CardContent>
+      </Card>
 
-      {filtered.length === 0 ? (
-        <Card className="border-slate-800 bg-slate-900/70">
-          <CardContent className="p-12 text-center">
-            <AlertTriangle className="mx-auto h-10 w-10 text-slate-600" />
-            <h3 className="mt-4 text-xl font-semibold text-slate-100">No issues found</h3>
-            <p className="mt-1 text-slate-400">
-              {search || severityFilter !== "all"
-                ? "Try adjusting your filters."
-                : "No issues have been detected in recent runs."}
-            </p>
-          </CardContent>
-        </Card>
-      ) : (
-        <section className="space-y-3">
-          {filtered.map((entry) => (
-            <Card key={entry.id} className="border-slate-800 bg-slate-900/70">
-              <CardContent className="space-y-4 p-5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium uppercase ${
-                        entry.issue.severity === "high"
-                          ? "border-red-500/40 bg-red-500/15 text-red-300"
-                          : entry.issue.severity === "medium"
-                            ? "border-amber-500/40 bg-amber-500/15 text-amber-300"
-                            : "border-blue-500/40 bg-blue-500/15 text-blue-300"
-                      }`}
-                    >
-                      <AlertTriangle className="h-3 w-3" />
-                      {entry.issue.severity}
-                    </span>
-                    <span className="text-sm text-slate-500">{entry.suiteName}</span>
-                  </div>
-
-                  <Link
-                    href={`/runs/${entry.auditId}`}
-                    className="inline-flex items-center gap-1 text-sm text-blue-300 hover:text-blue-200"
-                  >
-                    View Run <ArrowRight className="h-4 w-4" />
-                  </Link>
+      <section className="space-y-3">
+        {cards.map((card, index) => (
+          <Card key={`${card.id}-${index}`} className="border-slate-800 bg-slate-900/70">
+            <CardContent className="space-y-3 p-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="rounded-full border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs text-slate-300">{card.id}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs ${card.source === "local" ? "bg-blue-500/20 text-blue-300" : "bg-emerald-500/20 text-emerald-300"}`}>
+                    {card.source === "local" ? "local" : "nextjs-api"}
+                  </span>
+                  <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-300">{card.priority}</span>
                 </div>
+                <span className="text-xs text-slate-500">#{index + 1}</span>
+              </div>
 
+              <div>
+                <h3 className="text-base font-semibold text-slate-100">{card.title}</h3>
+                <p className="text-sm text-slate-400">{card.problem.summary}</p>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-3">
                 <div>
-                  <h3 className="text-lg font-semibold text-slate-100">{entry.issue.title}</h3>
-                  <p className="mt-1 text-sm text-slate-400">{entry.issue.symptom}</p>
+                  <p className="text-xs text-slate-500">User Impact</p>
+                  <p className="text-sm text-slate-200">{card.impact.user}</p>
                 </div>
+                <div>
+                  <p className="text-xs text-slate-500">Business Impact</p>
+                  <p className="text-sm text-slate-200">{card.impact.business}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500">Risk</p>
+                  <p className="text-sm text-slate-200">{card.impact.risk}</p>
+                </div>
+              </div>
 
-                <div className="grid gap-3 md:grid-cols-4">
-                  <div>
-                    <p className="text-xs text-slate-500">Expected</p>
-                    <p className="text-sm text-slate-200">{entry.issue.expected}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-500">Actual</p>
-                    <p className="text-sm text-red-300">{entry.issue.actual}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-500">Run Date</p>
-                    <p className="inline-flex items-center gap-1 text-sm text-slate-300">
-                      <Clock className="h-3 w-3" />
-                      {formatDate(entry.runDate)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-500">Fix Approach</p>
-                    <p className="text-sm text-emerald-300">{entry.issue.recommendedFixApproach}</p>
+              {card.problem.evidence.length ? (
+                <div>
+                  <p className="text-xs text-slate-500">Evidence</p>
+                  <div className="mt-1 grid gap-2">
+                    {card.problem.evidence.slice(0, 2).map((evidence, i) => (
+                      <div key={`${card.id}-e-${i}`} className="rounded border border-slate-800 bg-slate-950/70 p-2">
+                        <p className="text-xs text-slate-500">{evidence.path}:{evidence.line_start}-{evidence.line_end}</p>
+                        <pre className="overflow-x-auto text-xs text-slate-300">{evidence.snippet}</pre>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-          ))}
-        </section>
-      )}
+              ) : null}
+            </CardContent>
+          </Card>
+        ))}
+      </section>
     </div>
   );
 }

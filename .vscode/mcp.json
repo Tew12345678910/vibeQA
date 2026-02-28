@@ -1,0 +1,18 @@
+{
+  "servers": {
+    "supabase": {
+      "url": "https://mcp.supabase.com/mcp?project_ref=nobnhrhkmavjkzlekpbv",
+      "headers": {
+        "Authorization": "Bearer ${input:supabase-access-token}"
+      }
+    }
+  },
+  "inputs": [
+    {
+      "id": "supabase-access-token",
+      "type": "promptString",
+      "description": "Supabase Personal Access Token — get one at supabase.com/dashboard/account/tokens",
+      "password": true
+    }
+  ]
+}

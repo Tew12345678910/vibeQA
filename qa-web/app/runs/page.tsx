@@ -1,5 +1,5 @@
-import { RunsPageClient } from "@/components/browserqa/RunsPageClient";
+import { redirect } from "next/navigation";
 
 export default function RunsPage() {
-  return <RunsPageClient />;
+  redirect("/projects/new");
 }

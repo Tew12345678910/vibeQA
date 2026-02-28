@@ -1,5 +1,11 @@
+import { Suspense } from "react";
+
 import { IssuesPageClient } from "@/components/browserqa/IssuesPageClient";
 
 export default function IssuesPage() {
-  return <IssuesPageClient />;
+  return (
+    <Suspense>
+      <IssuesPageClient />
+    </Suspense>
+  );
 }

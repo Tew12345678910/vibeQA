@@ -13,7 +13,7 @@ import type {
 } from "@/lib/contracts";
 
 import { emptyAuditSummary } from "@/lib/cloud/mapper";
-import { getSql } from "./client";
+import { getDbClient } from "./client";
 
 type AuditRunRow = {
   id: string;
@@ -79,72 +79,28 @@ function requireUuid(raw: string): string {
   return raw;
 }
 
+function throwDbError(error: { message?: string } | null): never {
+  throw new Error(error?.message ?? "Database request failed");
+}
+
 export async function ensureSchema(): Promise<void> {
   if (schemaReady) return schemaReady;
 
   schemaReady = (async () => {
-    const sql = getSql();
+    const db = getDbClient();
+    const { error } = await db
+      .from("audit_runs")
+      .select("id", { head: true, count: "exact" })
+      .limit(1);
 
-    await sql`
-      CREATE TABLE IF NOT EXISTS audit_runs (
-        id text PRIMARY KEY,
-        base_url text NOT NULL,
-        input_json jsonb NOT NULL,
-        status text NOT NULL,
-        external_run_id text,
-        summary_json jsonb,
-        progress_json jsonb,
-        error text,
-        created_at bigint NOT NULL,
-        updated_at bigint NOT NULL,
-        started_at bigint,
-        finished_at bigint,
-        last_synced_at bigint
-      );
-    `;
-
-    await sql`
-      CREATE TABLE IF NOT EXISTS audit_page_results (
-        id bigserial PRIMARY KEY,
-        audit_id text NOT NULL REFERENCES audit_runs(id) ON DELETE CASCADE,
-        route text NOT NULL,
-        viewport_key text NOT NULL,
-        status text NOT NULL,
-        result_json jsonb NOT NULL,
-        created_at bigint NOT NULL,
-        updated_at bigint NOT NULL,
-        UNIQUE(audit_id, route, viewport_key)
-      );
-    `;
-
-    await sql`
-      CREATE TABLE IF NOT EXISTS audit_issues (
-        id bigserial PRIMARY KEY,
-        audit_id text NOT NULL REFERENCES audit_runs(id) ON DELETE CASCADE,
-        severity text NOT NULL,
-        category text NOT NULL,
-        title text NOT NULL,
-        issue_json jsonb NOT NULL,
-        created_at bigint NOT NULL
-      );
-    `;
-
-    await sql`
-      CREATE TABLE IF NOT EXISTS audit_artifacts (
-        id bigserial PRIMARY KEY,
-        audit_id text NOT NULL REFERENCES audit_runs(id) ON DELETE CASCADE,
-        kind text NOT NULL,
-        url text NOT NULL,
-        meta_json jsonb NOT NULL,
-        created_at bigint NOT NULL
-      );
-    `;
-
-    await sql`CREATE INDEX IF NOT EXISTS audit_runs_status_created_idx ON audit_runs(status, created_at DESC);`;
-    await sql`CREATE INDEX IF NOT EXISTS audit_runs_base_url_idx ON audit_runs(base_url);`;
-    await sql`CREATE INDEX IF NOT EXISTS audit_page_results_audit_idx ON audit_page_results(audit_id);`;
-    await sql`CREATE INDEX IF NOT EXISTS audit_issues_audit_idx ON audit_issues(audit_id);`;
-    await sql`CREATE INDEX IF NOT EXISTS audit_artifacts_audit_idx ON audit_artifacts(audit_id);`;
+    if (error) {
+      if (/relation .* does not exist|Could not find the table/i.test(error.message)) {
+        throw new Error(
+          "Supabase tables are missing. Run the SQL in qa-web/supabase/migrations/20260228_audit_tables.sql first.",
+        );
+      }
+      throwDbError(error);
+    }
   })();
 
   return schemaReady;
@@ -154,14 +110,21 @@ export async function createAuditRun(
   input: AuditRequest,
 ): Promise<{ auditId: string; status: RunStatus }> {
   await ensureSchema();
-  const sql = getSql();
+  const db = getDbClient();
   const auditId = crypto.randomUUID();
   const ts = nowMs();
 
-  await sql`
-    INSERT INTO audit_runs (id, base_url, input_json, status, created_at, updated_at, started_at)
-    VALUES (${auditId}, ${input.baseUrl}, ${JSON.stringify(input)}, ${"queued"}, ${ts}, ${ts}, ${ts})
-  `;
+  const { error } = await db.from("audit_runs").insert({
+    id: auditId,
+    base_url: input.baseUrl,
+    input_json: input,
+    status: "queued",
+    created_at: ts,
+    updated_at: ts,
+    started_at: ts,
+  });
+
+  if (error) throwDbError(error);
 
   return { auditId, status: "queued" };
 }
@@ -172,19 +135,22 @@ export async function updateRunOnStart(args: {
   status: RunStatus;
 }): Promise<void> {
   await ensureSchema();
-  const sql = getSql();
+  const db = getDbClient();
   const ts = nowMs();
   const auditId = requireUuid(args.auditId);
 
-  await sql`
-    UPDATE audit_runs
-    SET external_run_id = ${args.externalRunId},
-        status = ${args.status},
-        updated_at = ${ts},
-        last_synced_at = ${ts},
-        error = null
-    WHERE id = ${auditId}
-  `;
+  const { error } = await db
+    .from("audit_runs")
+    .update({
+      external_run_id: args.externalRunId,
+      status: args.status,
+      updated_at: ts,
+      last_synced_at: ts,
+      error: null,
+    })
+    .eq("id", auditId);
+
+  if (error) throwDbError(error);
 }
 
 export async function markRunFailed(
@@ -192,48 +158,60 @@ export async function markRunFailed(
   message: string,
 ): Promise<void> {
   await ensureSchema();
-  const sql = getSql();
+  const db = getDbClient();
   const ts = nowMs();
 
-  await sql`
-    UPDATE audit_runs
-    SET status = ${"failed"},
-        error = ${message},
-        updated_at = ${ts},
-        finished_at = ${ts},
-        last_synced_at = ${ts}
-    WHERE id = ${requireUuid(auditId)}
-  `;
+  const { error } = await db
+    .from("audit_runs")
+    .update({
+      status: "failed",
+      error: message,
+      updated_at: ts,
+      finished_at: ts,
+      last_synced_at: ts,
+    })
+    .eq("id", requireUuid(auditId));
+
+  if (error) throwDbError(error);
 }
 
 export async function cancelRun(auditId: string): Promise<void> {
   await ensureSchema();
-  const sql = getSql();
+  const db = getDbClient();
   const ts = nowMs();
+  const id = requireUuid(auditId);
 
-  await sql`
-    UPDATE audit_runs
-    SET status = ${"canceled"},
-        updated_at = ${ts},
-        finished_at = CASE WHEN finished_at IS NULL THEN ${ts} ELSE finished_at END,
-        last_synced_at = ${ts}
-    WHERE id = ${requireUuid(auditId)}
-  `;
+  const row = await getRunRow(id);
+  if (!row) return;
+
+  const { error } = await db
+    .from("audit_runs")
+    .update({
+      status: "canceled",
+      updated_at: ts,
+      finished_at: row.finished_at ?? ts,
+      last_synced_at: ts,
+    })
+    .eq("id", id);
+
+  if (error) throwDbError(error);
 }
 
 export async function getRunRow(auditId: string): Promise<AuditRunRow | null> {
   await ensureSchema();
-  const sql = getSql();
+  const db = getDbClient();
 
-  const rows = (await sql`
-    SELECT id, base_url, input_json, status, external_run_id, summary_json,
-           progress_json, error, created_at, updated_at, started_at, finished_at, last_synced_at
-    FROM audit_runs
-    WHERE id = ${requireUuid(auditId)}
-    LIMIT 1
-  `) as AuditRunRow[];
+  const { data, error } = await db
+    .from("audit_runs")
+    .select(
+      "id, base_url, input_json, status, external_run_id, summary_json, progress_json, error, created_at, updated_at, started_at, finished_at, last_synced_at",
+    )
+    .eq("id", requireUuid(auditId))
+    .maybeSingle<AuditRunRow>();
 
-  return rows[0] ?? null;
+  if (error) throwDbError(error);
+
+  return data ?? null;
 }
 
 export async function updateRunWithCloudSnapshot(args: {
@@ -247,47 +225,82 @@ export async function updateRunWithCloudSnapshot(args: {
   error?: string | null;
 }): Promise<void> {
   await ensureSchema();
-  const sql = getSql();
+  const db = getDbClient();
   const ts = nowMs();
   const finishedAt = ["completed", "failed", "canceled"].includes(args.status)
     ? ts
     : null;
 
-  await sql`
-    UPDATE audit_runs
-    SET status = ${args.status},
-        summary_json = ${JSON.stringify(args.summary)},
-        progress_json = ${JSON.stringify(args.progress)},
-        error = ${args.error ?? null},
-        updated_at = ${ts},
-        last_synced_at = ${ts},
-        finished_at = COALESCE(finished_at, ${finishedAt})
-    WHERE id = ${requireUuid(args.auditId)}
-  `;
+  const id = requireUuid(args.auditId);
 
-  await sql`DELETE FROM audit_page_results WHERE audit_id = ${args.auditId}`;
-  await sql`DELETE FROM audit_issues WHERE audit_id = ${args.auditId}`;
-  await sql`DELETE FROM audit_artifacts WHERE audit_id = ${args.auditId}`;
+  const currentRow = await getRunRow(id);
 
-  for (const item of args.pageResults) {
-    await sql`
-      INSERT INTO audit_page_results (audit_id, route, viewport_key, status, result_json, created_at, updated_at)
-      VALUES (${args.auditId}, ${item.route}, ${item.viewportKey}, ${item.status}, ${JSON.stringify(item)}, ${ts}, ${ts})
-    `;
+  const { error: updateError } = await db
+    .from("audit_runs")
+    .update({
+      status: args.status,
+      summary_json: args.summary,
+      progress_json: args.progress,
+      error: args.error ?? null,
+      updated_at: ts,
+      last_synced_at: ts,
+      finished_at: currentRow?.finished_at ?? finishedAt,
+    })
+    .eq("id", id);
+
+  if (updateError) throwDbError(updateError);
+
+  const [{ error: pageDeleteError }, { error: issueDeleteError }, { error: artifactDeleteError }] =
+    await Promise.all([
+      db.from("audit_page_results").delete().eq("audit_id", id),
+      db.from("audit_issues").delete().eq("audit_id", id),
+      db.from("audit_artifacts").delete().eq("audit_id", id),
+    ]);
+
+  if (pageDeleteError) throwDbError(pageDeleteError);
+  if (issueDeleteError) throwDbError(issueDeleteError);
+  if (artifactDeleteError) throwDbError(artifactDeleteError);
+
+  if (args.pageResults.length) {
+    const { error } = await db.from("audit_page_results").insert(
+      args.pageResults.map((item) => ({
+        audit_id: id,
+        route: item.route,
+        viewport_key: item.viewportKey,
+        status: item.status,
+        result_json: item,
+        created_at: ts,
+        updated_at: ts,
+      })),
+    );
+    if (error) throwDbError(error);
   }
 
-  for (const item of args.issues) {
-    await sql`
-      INSERT INTO audit_issues (audit_id, severity, category, title, issue_json, created_at)
-      VALUES (${args.auditId}, ${item.severity}, ${item.category}, ${item.title}, ${JSON.stringify(item)}, ${ts})
-    `;
+  if (args.issues.length) {
+    const { error } = await db.from("audit_issues").insert(
+      args.issues.map((item) => ({
+        audit_id: id,
+        severity: item.severity,
+        category: item.category,
+        title: item.title,
+        issue_json: item,
+        created_at: ts,
+      })),
+    );
+    if (error) throwDbError(error);
   }
 
-  for (const item of args.artifacts) {
-    await sql`
-      INSERT INTO audit_artifacts (audit_id, kind, url, meta_json, created_at)
-      VALUES (${args.auditId}, ${item.kind}, ${item.url}, ${JSON.stringify(item.meta)}, ${ts})
-    `;
+  if (args.artifacts.length) {
+    const { error } = await db.from("audit_artifacts").insert(
+      args.artifacts.map((item) => ({
+        audit_id: id,
+        kind: item.kind,
+        url: item.url,
+        meta_json: item.meta,
+        created_at: ts,
+      })),
+    );
+    if (error) throwDbError(error);
   }
 }
 
@@ -303,22 +316,37 @@ export async function getAuditStatusResponse(
   auditId: string,
 ): Promise<AuditStatusResponse | null> {
   await ensureSchema();
-  const sql = getSql();
-  const row = await getRunRow(auditId);
+  const db = getDbClient();
+  const id = requireUuid(auditId);
+  const row = await getRunRow(id);
   if (!row) return null;
 
-  const [pages, issues, artifacts] = (await Promise.all([
-    sql`
-      SELECT route, viewport_key, status, result_json FROM audit_page_results
-      WHERE audit_id = ${auditId} ORDER BY route ASC, viewport_key ASC
-    `,
-    sql`
-      SELECT issue_json FROM audit_issues WHERE audit_id = ${auditId} ORDER BY id ASC
-    `,
-    sql`
-      SELECT kind, url, meta_json FROM audit_artifacts WHERE audit_id = ${auditId} ORDER BY id ASC
-    `,
-  ])) as [AuditPageRow[], AuditIssueRow[], AuditArtifactRow[]];
+  const [pagesResult, issuesResult, artifactsResult] = await Promise.all([
+    db
+      .from("audit_page_results")
+      .select("route, viewport_key, status, result_json")
+      .eq("audit_id", id)
+      .order("route", { ascending: true })
+      .order("viewport_key", { ascending: true }),
+    db
+      .from("audit_issues")
+      .select("issue_json")
+      .eq("audit_id", id)
+      .order("id", { ascending: true }),
+    db
+      .from("audit_artifacts")
+      .select("kind, url, meta_json")
+      .eq("audit_id", id)
+      .order("id", { ascending: true }),
+  ]);
+
+  if (pagesResult.error) throwDbError(pagesResult.error);
+  if (issuesResult.error) throwDbError(issuesResult.error);
+  if (artifactsResult.error) throwDbError(artifactsResult.error);
+
+  const pages = (pagesResult.data ?? []) as AuditPageRow[];
+  const issues = (issuesResult.data ?? []) as AuditIssueRow[];
+  const artifacts = (artifactsResult.data ?? []) as AuditArtifactRow[];
 
   const summary = row.summary_json ?? emptyAuditSummary(row.base_url);
   const progress: AuditProgress = row.progress_json ?? {
@@ -359,53 +387,40 @@ export async function listAuditStatusResponses(args: {
   dateTo?: number;
 }): Promise<{ items: AuditListItem[]; nextCursor: number | null }> {
   await ensureSchema();
-  const sql = getSql();
+  const db = getDbClient();
 
-  const conditions: string[] = [];
-  const params: Array<string | number> = [];
+  let query = db
+    .from("audit_runs")
+    .select(
+      "id, base_url, input_json, status, external_run_id, summary_json, progress_json, error, created_at, updated_at, started_at, finished_at, last_synced_at",
+    )
+    .order("created_at", { ascending: false })
+    .limit(args.limit + 1);
 
   if (args.status) {
-    params.push(args.status);
-    conditions.push(`status = $${params.length}`);
+    query = query.eq("status", args.status);
   }
 
   if (args.baseUrl) {
-    params.push(`%${args.baseUrl.toLowerCase()}%`);
-    conditions.push(`LOWER(base_url) LIKE $${params.length}`);
+    query = query.ilike("base_url", `%${args.baseUrl}%`);
   }
 
   if (args.dateFrom) {
-    params.push(args.dateFrom);
-    conditions.push(`created_at >= $${params.length}`);
+    query = query.gte("created_at", args.dateFrom);
   }
 
   if (args.dateTo) {
-    params.push(args.dateTo);
-    conditions.push(`created_at <= $${params.length}`);
+    query = query.lte("created_at", args.dateTo);
   }
 
   if (args.cursor) {
-    params.push(args.cursor);
-    conditions.push(`created_at < $${params.length}`);
+    query = query.lt("created_at", args.cursor);
   }
 
-  params.push(args.limit + 1);
+  const { data, error } = await query;
+  if (error) throwDbError(error);
 
-  const whereClause = conditions.length
-    ? `WHERE ${conditions.join(" AND ")}`
-    : "";
-  const rows = (await sql.query(
-    `
-    SELECT id, base_url, input_json, status, external_run_id, summary_json,
-           progress_json, error, created_at, updated_at, started_at, finished_at, last_synced_at
-    FROM audit_runs
-    ${whereClause}
-    ORDER BY created_at DESC
-    LIMIT $${params.length}
-    `,
-    params,
-  )) as AuditRunRow[];
-
+  const rows = (data ?? []) as AuditRunRow[];
   const hasNext = rows.length > args.limit;
   const slice = hasNext ? rows.slice(0, args.limit) : rows;
 

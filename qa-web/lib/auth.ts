@@ -1,35 +1,24 @@
-import { betterAuth } from "better-auth";
-import { Pool } from "@neondatabase/serverless";
+import type { User } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 
-declare global {
-  // eslint-disable-next-line no-var
-  var __qaAuthPool: Pool | undefined;
-}
+/**
+ * Returns the authenticated Supabase user from a bearer token.
+ * Suitable for server-side API route guards.
+ */
+export async function getUserFromToken(
+  accessToken: string,
+): Promise<User | null> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey =
+    process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-function getAuthPool(): Pool {
-  if (globalThis.__qaAuthPool) {
-    return globalThis.__qaAuthPool;
-  }
+  if (!url || !serviceKey) return null;
 
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    throw new Error("DATABASE_URL is required");
-  }
-
-  const pool = new Pool({
-    connectionString: databaseUrl,
+  const admin = createClient(url, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  globalThis.__qaAuthPool = pool;
-  return pool;
+  const { data, error } = await admin.auth.getUser(accessToken);
+  if (error || !data.user) return null;
+  return data.user;
 }
-
-export const auth = betterAuth({
-  database: getAuthPool(),
-  baseURL: process.env.BETTER_AUTH_URL ?? process.env.APP_BASE_URL ?? "http://localhost:3000",
-  secret: process.env.BETTER_AUTH_SECRET ?? "development-only-secret-change-me",
-  emailAndPassword: {
-    enabled: true,
-    requireEmailVerification: false,
-  },
-});

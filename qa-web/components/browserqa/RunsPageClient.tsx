@@ -2,21 +2,19 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import {
-  ArrowRight,
-  Clock,
-  Filter,
-  Play,
-  Search,
-} from "lucide-react";
+import { ArrowRight, Clock, Filter, Play, Search } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { fetchAudits } from "@/lib/browserqa/api";
 import { formatDateTime } from "@/lib/browserqa/format";
-import { buildSuitesFromAudits } from "@/lib/browserqa/suite-utils";
-import { listItemDisplayStatus, type DisplayRunStatus } from "@/lib/browserqa/status";
+import { buildProjectsFromAudits } from "@/lib/browserqa/project-utils";
+import {
+  listItemDisplayStatus,
+  type DisplayRunStatus,
+} from "@/lib/browserqa/status";
 import { StatusBadge } from "@/components/browserqa/StatusBadge";
+import { TableLoadingState } from "@/components/browserqa/LoadingStates";
 import type { AuditListItem } from "@/lib/contracts";
 
 const statusOptions: Array<DisplayRunStatus | "all"> = [
@@ -31,7 +29,8 @@ const statusOptions: Array<DisplayRunStatus | "all"> = [
 export function RunsPageClient() {
   const [audits, setAudits] = useState<AuditListItem[]>([]);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<(typeof statusOptions)[number]>("all");
+  const [statusFilter, setStatusFilter] =
+    useState<(typeof statusOptions)[number]>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -59,25 +58,27 @@ export function RunsPageClient() {
     };
   }, []);
 
-  const suites = useMemo(() => buildSuitesFromAudits(audits), [audits]);
+  const projects = useMemo(() => buildProjectsFromAudits(audits), [audits]);
 
   const filteredRuns = useMemo(() => {
     const query = search.trim().toLowerCase();
 
     return audits.filter((run) => {
       const runStatus = listItemDisplayStatus(run);
-      const suiteName = suites.find((suite) => suite.baseUrl === run.baseUrl)?.name ?? run.baseUrl;
+      const projectName =
+        projects.find((p) => p.baseUrl === run.baseUrl)?.name ?? run.baseUrl;
 
-      const matchesStatus = statusFilter === "all" || runStatus === statusFilter;
+      const matchesStatus =
+        statusFilter === "all" || runStatus === statusFilter;
       const matchesSearch =
         !query ||
         run.auditId.toLowerCase().includes(query) ||
         run.baseUrl.toLowerCase().includes(query) ||
-        suiteName.toLowerCase().includes(query);
+        projectName.toLowerCase().includes(query);
 
       return matchesStatus && matchesSearch;
     });
-  }, [audits, search, statusFilter, suites]);
+  }, [audits, search, statusFilter, projects]);
 
   const statusCounts = useMemo(() => {
     const counts: Record<(typeof statusOptions)[number], number> = {
@@ -97,14 +98,16 @@ export function RunsPageClient() {
   }, [audits]);
 
   if (loading) {
-    return <p className="text-sm text-slate-400">Loading runs...</p>;
+    return <TableLoadingState titleWidth="w-36" rows={8} />;
   }
 
   return (
     <div className="space-y-6">
       <section>
         <h1 className="text-3xl font-bold text-slate-100">Test Runs</h1>
-        <p className="mt-2 text-slate-400">View and manage all test execution runs</p>
+        <p className="mt-2 text-slate-400">
+          View and manage all test execution runs
+        </p>
       </section>
 
       <section className="flex flex-col gap-3 md:flex-row">
@@ -121,15 +124,19 @@ export function RunsPageClient() {
         <div className="flex items-center gap-2">
           <Filter className="h-4 w-4 text-slate-400" />
           <select
+            title="filter"
             value={statusFilter}
             onChange={(event) =>
-              setStatusFilter(event.target.value as (typeof statusOptions)[number])
+              setStatusFilter(
+                event.target.value as (typeof statusOptions)[number],
+              )
             }
             className="h-10 rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-slate-100 outline-none"
           >
             {statusOptions.map((status) => (
               <option key={status} value={status}>
-                {status[0].toUpperCase() + status.slice(1)} ({statusCounts[status]})
+                {status[0].toUpperCase() + status.slice(1)} (
+                {statusCounts[status]})
               </option>
             ))}
           </select>
@@ -142,11 +149,13 @@ export function RunsPageClient() {
         <Card className="border-slate-800 bg-slate-900/70">
           <CardContent className="p-12 text-center">
             <Play className="mx-auto h-10 w-10 text-slate-600" />
-            <h3 className="mt-4 text-xl font-semibold text-slate-100">No runs found</h3>
+            <h3 className="mt-4 text-xl font-semibold text-slate-100">
+              No runs found
+            </h3>
             <p className="mt-1 text-slate-400">
               {search || statusFilter !== "all"
                 ? "Try adjusting your filters."
-                : "Run a suite to see results here."}
+                : "Run a project to see results here."}
             </p>
           </CardContent>
         </Card>
@@ -157,7 +166,7 @@ export function RunsPageClient() {
               <thead>
                 <tr className="border-b border-slate-800 text-left text-xs uppercase tracking-wide text-slate-500">
                   <th className="p-4">Run</th>
-                  <th className="p-4">Suite</th>
+                  <th className="p-4">Project</th>
                   <th className="p-4">Status</th>
                   <th className="p-4">Results</th>
                   <th className="p-4">Date</th>
@@ -166,18 +175,31 @@ export function RunsPageClient() {
               </thead>
               <tbody>
                 {filteredRuns.map((run) => {
-                  const suite = suites.find((entry) => entry.baseUrl === run.baseUrl);
+                  const project = projects.find(
+                    (entry) => entry.baseUrl === run.baseUrl,
+                  );
                   return (
-                    <tr key={run.auditId} className="border-b border-slate-800/70 hover:bg-slate-800/20">
-                      <td className="p-4 font-mono text-xs text-blue-300">{run.auditId.slice(0, 8)}</td>
-                      <td className="p-4 text-sm text-slate-100">{suite?.name ?? run.baseUrl}</td>
+                    <tr
+                      key={run.auditId}
+                      className="border-b border-slate-800/70 hover:bg-slate-800/20"
+                    >
+                      <td className="p-4 font-mono text-xs text-blue-300">
+                        {run.auditId.slice(0, 8)}
+                      </td>
+                      <td className="p-4 text-sm text-slate-100">
+                        {project?.name ?? run.baseUrl}
+                      </td>
                       <td className="p-4">
                         <StatusBadge status={listItemDisplayStatus(run)} />
                       </td>
                       <td className="p-4 text-sm">
-                        <span className="text-emerald-300">{run.summary.passCount} pass</span>
+                        <span className="text-emerald-300">
+                          {run.summary.passCount} pass
+                        </span>
                         <span className="mx-2 text-slate-600">/</span>
-                        <span className="text-red-300">{run.summary.failCount} fail</span>
+                        <span className="text-red-300">
+                          {run.summary.failCount} fail
+                        </span>
                       </td>
                       <td className="p-4 text-xs text-slate-400">
                         <span className="inline-flex items-center gap-1">

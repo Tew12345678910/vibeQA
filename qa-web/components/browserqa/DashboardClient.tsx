@@ -33,6 +33,24 @@ export function DashboardClient() {
         const response = await fetchAudits({ limit: 50 });
         if (!active) return;
         setAudits(response.items);
+
+        // #region agent log
+        if (typeof window !== "undefined") {
+          fetch("http://127.0.0.1:7243/ingest/ec867638-7ea4-46f0-a075-9f86eb0391a7", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: `log_${Date.now()}_dashboard_init`,
+              timestamp: Date.now(),
+              location: "components/browserqa/DashboardClient.tsx:useEffect",
+              message: "DashboardClient loaded audits",
+              data: { auditCount: response.items.length },
+              runId: "initial",
+              hypothesisId: "H1",
+            }),
+          }).catch(() => {});
+        }
+        // #endregion
       } catch (err) {
         if (!active) return;
         setError(err instanceof Error ? err.message : "Failed to load dashboard");

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, Clock, Filter, Search } from "lucide-react";
+import { AlertTriangle, ArrowRight, Clock, Filter, Shield, Search } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -20,12 +20,12 @@ type IssueRow = {
   runDate: string;
 };
 
-const severityFilters = ["all", "high", "medium", "low"] as const;
+const levelFilters = ["all", "alarming", "error", "security"] as const;
 
 export function IssuesPageClient() {
   const [issues, setIssues] = useState<IssueRow[]>([]);
   const [search, setSearch] = useState("");
-  const [severityFilter, setSeverityFilter] = useState<(typeof severityFilters)[number]>("all");
+  const [levelFilter, setLevelFilter] = useState<(typeof levelFilters)[number]>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -69,6 +69,24 @@ export function IssuesPageClient() {
         });
 
         setIssues(flattened);
+
+        // #region agent log
+        if (typeof window !== "undefined") {
+          fetch("http://127.0.0.1:7243/ingest/ec867638-7ea4-46f0-a075-9f86eb0391a7", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: `log_${Date.now()}_issues_loaded`,
+              timestamp: Date.now(),
+              location: "components/browserqa/IssuesPageClient.tsx:useEffect",
+              message: "IssuesPageClient loaded issues",
+              data: { issueCount: flattened.length },
+              runId: "initial",
+              hypothesisId: "H2",
+            }),
+          }).catch(() => {});
+        }
+        // #endregion
       } catch (err) {
         if (!active) return;
         setError(err instanceof Error ? err.message : "Failed to load issues");
@@ -89,24 +107,40 @@ export function IssuesPageClient() {
     const keyword = search.trim().toLowerCase();
 
     return issues.filter((entry) => {
-      const severityMatch =
-        severityFilter === "all" || entry.issue.severity === severityFilter;
+      const { issue } = entry;
+
+      const levelMatch =
+        levelFilter === "all"
+          ? true
+          : levelFilter === "alarming"
+            ? issue.severity === "high"
+            : levelFilter === "error"
+              ? issue.severity !== "high" && issue.category !== "security"
+              : issue.category === "security";
       const searchMatch =
         !keyword ||
         entry.issue.title.toLowerCase().includes(keyword) ||
         entry.issue.symptom.toLowerCase().includes(keyword) ||
         entry.suiteName.toLowerCase().includes(keyword);
 
-      return severityMatch && searchMatch;
+      return levelMatch && searchMatch;
     });
-  }, [issues, search, severityFilter]);
+  }, [issues, search, levelFilter]);
 
   const counts = useMemo(() => {
+    const alarming = issues.filter(
+      (entry) => entry.issue.severity === "high",
+    ).length;
+    const security = issues.filter(
+      (entry) => entry.issue.category === "security",
+    ).length;
+    const error = issues.length - alarming - security;
+
     return {
       all: issues.length,
-      high: issues.filter((entry) => entry.issue.severity === "high").length,
-      medium: issues.filter((entry) => entry.issue.severity === "medium").length,
-      low: issues.filter((entry) => entry.issue.severity === "low").length,
+      alarming,
+      error,
+      security,
     };
   }, [issues]);
 
@@ -117,8 +151,10 @@ export function IssuesPageClient() {
   return (
     <div className="space-y-6">
       <section>
-        <h1 className="text-3xl font-bold text-slate-100">Issues</h1>
-        <p className="mt-2 text-slate-400">View and track all detected issues across your test runs</p>
+        <h1 className="text-3xl font-bold text-slate-100">Issues & Security</h1>
+        <p className="mt-2 text-slate-400">
+          View and track all detected issues across your test runs, grouped by impact and security level.
+        </p>
       </section>
 
       <section className="flex flex-col gap-3 md:flex-row">
@@ -135,17 +171,16 @@ export function IssuesPageClient() {
         <div className="flex items-center gap-2">
           <Filter className="h-4 w-4 text-slate-400" />
           <select
-            value={severityFilter}
+            value={levelFilter}
             onChange={(event) =>
-              setSeverityFilter(event.target.value as (typeof severityFilters)[number])
+              setLevelFilter(event.target.value as (typeof levelFilters)[number])
             }
             className="h-10 rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-slate-100 outline-none"
           >
-            {severityFilters.map((severity) => (
-              <option key={severity} value={severity}>
-                {severity[0].toUpperCase() + severity.slice(1)} ({counts[severity]})
-              </option>
-            ))}
+            <option value="all">All ({counts.all})</option>
+            <option value="alarming">Alarming ({counts.alarming})</option>
+            <option value="error">Errors ({counts.error})</option>
+            <option value="security">Security ({counts.security})</option>
           </select>
         </div>
       </section>
@@ -158,7 +193,7 @@ export function IssuesPageClient() {
             <AlertTriangle className="mx-auto h-10 w-10 text-slate-600" />
             <h3 className="mt-4 text-xl font-semibold text-slate-100">No issues found</h3>
             <p className="mt-1 text-slate-400">
-              {search || severityFilter !== "all"
+              {search || levelFilter !== "all"
                 ? "Try adjusting your filters."
                 : "No issues have been detected in recent runs."}
             </p>

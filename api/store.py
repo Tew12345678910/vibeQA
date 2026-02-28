@@ -1,5 +1,5 @@
 """
-In-memory store for audit runs. run_id -> { findings, reviewer, runMode }.
+In-memory store for audit runs. run_id -> { simple, runMode }.
 """
 from typing import Any, Dict, Optional
 

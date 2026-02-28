@@ -1,8 +1,12 @@
 """
-EduQA Cloud Browser API – Test Plan → Browser-Use → Reviewer AI → CloudAuditPayload.
+EduQA Cloud Browser API – Test Plan → Browser-Use → simple audit (routes, good_points, problems).
 
-Entrypoint: uvicorn aws.cloud_api:app --reload --host 0.0.0.0 --port 8001
+Run: python -m uvicorn api.cloud_api:app --reload --host 0.0.0.0 --port 8001
 """
+from dotenv import load_dotenv
+
+load_dotenv()  # Load .env from project root (or cwd) before any code uses os.environ
+
 from fastapi import FastAPI
 
 from .routers import audits

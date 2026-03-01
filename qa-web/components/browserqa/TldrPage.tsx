@@ -95,7 +95,9 @@ function ISection({
           {label}
         </span>
       </div>
-      <div className="text-[11px] leading-relaxed text-slate-300">{children}</div>
+      <div className="text-[11px] leading-relaxed text-slate-300">
+        {children}
+      </div>
     </div>
   );
 }
@@ -181,8 +183,8 @@ export function TldrPage() {
             <div className="mt-3 flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-3">
               <span className="text-3xl font-black text-emerald-400">100+</span>
               <span className="text-xs leading-snug text-slate-400">
-                quality checks in our database — most invisible
-                to static analysis alone.
+                quality checks in our database — most invisible to static
+                analysis alone.
               </span>
             </div>
           </div>
@@ -248,8 +250,8 @@ export function TldrPage() {
                 </span>
               </div>
               <p className="text-[11px] leading-relaxed text-slate-400">
-                These issues only surface when a real user 
-                (or browser agent) interacts with the live app.
+                These issues only surface when a real user (or browser agent)
+                interacts with the live app.
               </p>
             </div>
           </div>
@@ -384,7 +386,6 @@ export function TldrPage() {
 
           {/* Card shell */}
           <div className="flex flex-col gap-2 rounded-xl border border-slate-700 bg-slate-900 p-3">
-
             {/* ── Header ── */}
             <div className="flex flex-wrap items-start gap-2">
               <span className="rounded-md border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[11px] font-black text-red-400">
@@ -403,7 +404,9 @@ export function TldrPage() {
 
             <p className="text-sm font-bold text-slate-100 leading-snug">
               Missing authentication on{" "}
-              <code className="rounded bg-slate-800 px-1 text-red-300">/api/users</code>
+              <code className="rounded bg-slate-800 px-1 text-red-300">
+                /api/users
+              </code>
             </p>
 
             {/* ── Impact ── */}
@@ -411,7 +414,9 @@ export function TldrPage() {
               <div className="flex flex-col gap-1">
                 <div className="flex gap-1.5">
                   <span className="shrink-0 text-slate-500">User</span>
-                  <span>Any unauthenticated visitor can read all user accounts</span>
+                  <span>
+                    Any unauthenticated visitor can read all user accounts
+                  </span>
                 </div>
                 <div className="flex gap-1.5">
                   <span className="shrink-0 text-slate-500">Business</span>
@@ -419,7 +424,9 @@ export function TldrPage() {
                 </div>
                 <div className="flex gap-1.5">
                   <span className="shrink-0 text-slate-500">Risk</span>
-                  <span className="text-red-400 font-semibold">Critical — trivially exploitable</span>
+                  <span className="text-red-400 font-semibold">
+                    Critical — trivially exploitable
+                  </span>
                 </div>
               </div>
             </ISection>
@@ -428,7 +435,9 @@ export function TldrPage() {
             <ISection icon={Globe} label="Scope" accent="text-sky-400">
               <div className="flex flex-col gap-1">
                 <div className="flex items-center gap-1.5">
-                  <span className="rounded border border-slate-700 bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">GET</span>
+                  <span className="rounded border border-slate-700 bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+                    GET
+                  </span>
                   <span className="font-mono text-slate-300">/api/users</span>
                   <span className="text-slate-600">·</span>
                   <span className="text-slate-500">endpoint</span>
@@ -441,11 +450,15 @@ export function TldrPage() {
             </ISection>
 
             {/* ── Problem ── */}
-            <ISection icon={AlertTriangle} label="Problem" accent="text-red-400">
+            <ISection
+              icon={AlertTriangle}
+              label="Problem"
+              accent="text-red-400"
+            >
               <div className="flex flex-col gap-1.5">
                 <p>GET handler returns all rows with no session check.</p>
                 <pre className="rounded-md border border-slate-700 bg-slate-950 p-2 font-mono text-[10px] text-slate-400 overflow-x-auto">
-{`export async function GET() {
+                  {`export async function GET() {
   const users = await db.getAllUsers();
   // ← no auth check
   return NextResponse.json(users);
@@ -455,17 +468,33 @@ export function TldrPage() {
             </ISection>
 
             {/* ── Recommendation ── */}
-            <ISection icon={Wrench} label="Recommendation" accent="text-emerald-400">
+            <ISection
+              icon={Wrench}
+              label="Recommendation"
+              accent="text-emerald-400"
+            >
               <div className="flex flex-col gap-1.5">
                 <p>Add session validation before querying the database.</p>
                 <ol className="flex flex-col gap-0.5 pl-3 list-decimal marker:text-slate-600">
-                  <li>Import <code className="text-slate-300">getServerSession</code> from next-auth</li>
+                  <li>
+                    Import{" "}
+                    <code className="text-slate-300">getServerSession</code>{" "}
+                    from next-auth
+                  </li>
                   <li>Check session at route entry point</li>
-                  <li>Return <code className="text-slate-300">401</code> if session is absent</li>
+                  <li>
+                    Return <code className="text-slate-300">401</code> if
+                    session is absent
+                  </li>
                 </ol>
                 <div className="mt-1 flex flex-col gap-0.5">
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Acceptance criteria</span>
-                  {["Auth header required on every request", "Unauthenticated call returns 401"].map((c) => (
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                    Acceptance criteria
+                  </span>
+                  {[
+                    "Auth header required on every request",
+                    "Unauthenticated call returns 401",
+                  ].map((c) => (
                     <div key={c} className="flex items-center gap-1.5">
                       <CheckCircle2 className="h-2.5 w-2.5 shrink-0 text-emerald-500" />
                       <span>{c}</span>
@@ -473,18 +502,31 @@ export function TldrPage() {
                   ))}
                 </div>
                 <div className="flex items-center gap-3 pt-0.5">
-                  <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-slate-300">Effort: S</span>
-                  <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-400">Confidence: high</span>
+                  <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-slate-300">
+                    Effort: S
+                  </span>
+                  <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
+                    Confidence: high
+                  </span>
                 </div>
               </div>
             </ISection>
 
             {/* ── Education ── */}
-            <ISection icon={BookOpen} label="Why it matters" accent="text-violet-400">
+            <ISection
+              icon={BookOpen}
+              label="Why it matters"
+              accent="text-violet-400"
+            >
               <div className="flex flex-col gap-1">
-                <p>Unauthenticated endpoints are the #1 cause of data breaches in API-first apps.</p>
+                <p>
+                  Unauthenticated endpoints are the #1 cause of data breaches in
+                  API-first apps.
+                </p>
                 <p className="flex items-start gap-1.5 text-slate-500">
-                  <span className="shrink-0 font-bold text-violet-500">Rule</span>
+                  <span className="shrink-0 font-bold text-violet-500">
+                    Rule
+                  </span>
                   Every route touching user data must verify identity first.
                 </p>
               </div>
@@ -492,9 +534,15 @@ export function TldrPage() {
 
             {/* ── Status footer ── */}
             <div className="flex flex-wrap items-center gap-2 border-t border-slate-800 pt-2">
-              <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-400">open</span>
-              <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-400">backend</span>
-              <span className="ml-auto font-mono text-[10px] text-slate-600">2026-03-01</span>
+              <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-400">
+                open
+              </span>
+              <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-400">
+                backend
+              </span>
+              <span className="ml-auto font-mono text-[10px] text-slate-600">
+                2026-03-01
+              </span>
             </div>
           </div>
         </div>

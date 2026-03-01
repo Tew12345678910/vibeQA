@@ -27,7 +27,7 @@ AI coding tools generate code quickly, but often miss production-quality require
 - `P1 Accessibility`: Missing alt text and weak interaction semantics
 - `P2 API Design`: Unbounded list endpoints
 
-These patterns appear frequently in AI-generated projects and create "works on my machine" code that fails in production.
+These patterns appear frequently in AI-generated projects and create "works on my machine" code that fails in production. We have more than 100+ Issues data set to identify all possible failure points.
 
 ## Solution
 

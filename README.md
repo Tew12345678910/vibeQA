@@ -115,6 +115,7 @@ CLOUD_BROWSER_API_KEY=your_browser_api_key
 ```env
 AGENTCORE_BROWSER_REGION=us-west-2
 BEDROCK_MODEL_ID=us.amazon.nova-pro-v1:0
+AGENTCORE_BROWSER_ID=
 AWS_ACCESS_KEY_ID=your_aws_key
 AWS_SECRET_ACCESS_KEY=your_aws_secret
 ```
@@ -178,8 +179,7 @@ python -m uvicorn api.cloud_api:app --reload --host 0.0.0.0 --port 8001
 ### Backend & APIs
 - **FastAPI** (Python) - Browser agent API server
 - **OpenAI API** - Issue generation and embeddings (`gpt-4o-mini`, `text-embedding-3-small`)
-- **AWS Bedrock** - AI agent orchestration (model: `us.amazon.nova-pro-v1:0`)
-- **Browser Use** - Automated browser testing library
+- **AWS Bedrock AgentCore (Browser Use Tool)** - AI agent orchestration (model: `us.amazon.nova-pro-v1:0`)
 
 ### Database & Storage
 - **Supabase**

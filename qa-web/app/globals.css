@@ -220,3 +220,14 @@ body {
     transform: translateY(12px) scale(0.97);
   }
 }
+
+.tldr-bg-grid {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.025;
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 1) 1px, transparent 1px);
+  background-size: 48px 48px;
+}

@@ -17,8 +17,8 @@ type AppChromeProps = {
 export function AppChrome({ children }: AppChromeProps) {
   const pathname = usePathname();
 
-  // Landing page and login page render full-screen without the app shell
-  if (pathname === "/" || pathname === "/login") {
+  // Landing, login, and tldr render full-screen without the app shell
+  if (pathname === "/" || pathname === "/login" || pathname === "/tldr") {
     return <>{children}</>;
   }
 

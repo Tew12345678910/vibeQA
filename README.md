@@ -68,13 +68,9 @@ This "issue → explanation → fix → principle" approach helps developers lea
 
 ## Team Members and Roles
 
-*(Add your team information here)*
-
-Example format:
-- **[Name]** - Project Lead & Backend Development
-- **[Name]** - Frontend Development & UI/UX
-- **[Name]** - AI/ML Integration & Browser Automation
-- **[Name]** - DevOps & Cloud Infrastructure
+- **Mathus** - Frontend Development & UI/UX
+- **Le** - AI/ML Integration & Browser Automation
+- **Phuong** - RAG Integration
 
 ## Setup Instructions
 

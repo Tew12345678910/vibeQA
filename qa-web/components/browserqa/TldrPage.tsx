@@ -380,7 +380,7 @@ export function TldrPage() {
               Sample Issue Card
             </Pill>
             <h2 className="mt-3 text-lg font-bold text-slate-100">
-              Every finding, fully structured.
+              Learn from your code, not just in it.
             </h2>
           </div>
 
